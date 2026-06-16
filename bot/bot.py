@@ -57,6 +57,7 @@ async def ask_date_selection(
     reply_target: Message,
 ):
     """Показать клавиатуру выбора даты."""
+    logger.info(f"ask_date_selection: user={user.id}, steps={steps}, photo_path={photo_path}")
     dates = _last_week_dates()
     user_steps = db.get_user_steps(user.id)
     existing_dates = {str(s.get("Date", "")) for s in user_steps}
@@ -78,11 +79,19 @@ async def ask_date_selection(
         "photo_path": photo_path,
     }
 
-    await reply_target.answer(
-        f"📅 Скриншот получен. За какую дату <b>{steps:,}</b> шагов?",
-        reply_markup=builder.as_markup(),
-        parse_mode=ParseMode.HTML,
-    )
+    try:
+        await reply_target.answer(
+            f"📅 Скриншот получен. За какую дату <b>{steps:,}</b> шагов?",
+            reply_markup=builder.as_markup(),
+            parse_mode=ParseMode.HTML,
+        )
+        logger.info(f"Клавиатура выбора даты отправлена user={user.id}")
+    except Exception as e:
+        logger.exception(f"Ошибка отправки клавиатуры выбора даты: {e}")
+        await reply_target.answer(
+            "❌ Не удалось показать кнопки выбора даты. Попробуй ещё раз.",
+            parse_mode=ParseMode.HTML,
+        )
 
 
 # ─── Парсинг сообщений ──────────────────────────────────────────────
@@ -352,6 +361,7 @@ async def process_steps(
 ):
     """Обработка и запись (или обновление) шагов."""
     display_name = user.full_name or user.username or "Unknown"
+    logger.info(f"process_steps: user={user.id}, date={date_str}, steps={steps}, has_photo={bool(photo_path)}")
     
     # Регистрируем участника
     db.get_or_create_participant(user.id, user.username, display_name)
@@ -368,8 +378,9 @@ async def process_steps(
                 steps=steps,
                 local_path=photo_path,
             )
+            logger.info(f"Скриншот загружен: {screenshot_url}")
         except Exception as e:
-            logger.error(f"Ошибка загрузки скриншота: {e}")
+            logger.exception(f"Ошибка загрузки скриншота: {e}")
             screenshot_url = ""
         finally:
             Path(photo_path).unlink(missing_ok=True)
@@ -378,17 +389,25 @@ async def process_steps(
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     username = user.username or ""
     
-    record, updated = db.add_or_update_step_record(
-        timestamp=timestamp,
-        username=username,
-        user_id=user.id,
-        display_name=display_name,
-        date=date_str,
-        steps=steps,
-        screenshot_url=screenshot_url,
-        verified="No",
-        notes="",
-    )
+    try:
+        record, updated = db.add_or_update_step_record(
+            timestamp=timestamp,
+            username=username,
+            user_id=user.id,
+            display_name=display_name,
+            date=date_str,
+            steps=steps,
+            screenshot_url=screenshot_url,
+            verified="No",
+            notes="",
+        )
+    except Exception as e:
+        logger.exception(f"Ошибка записи в базу: {e}")
+        await reply_target.answer(
+            "❌ Не удалось сохранить шаги. Попробуй ещё раз через минуту.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
     
     # Формируем ответ
     date_display = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
@@ -413,6 +432,7 @@ async def on_date_selected(callback: CallbackQuery):
     """Обработка выбора даты в inline-клавиатуре."""
     user = callback.from_user
     date_str = callback.data.split(":", 1)[1]
+    logger.info(f"Выбор даты: user={user.id}, date={date_str}")
     
     pending = pending_date_selections.pop(user.id, None)
     if not pending:
@@ -422,20 +442,39 @@ async def on_date_selected(callback: CallbackQuery):
         )
         return
     
-    await callback.answer()
+    await callback.answer("Сохраняю...")
     
-    if callback.message:
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        await process_steps(
-            callback.message,
-            user,
-            date_str,
-            pending["steps"],
-            photo_path=pending.get("photo_path") or "",
+    try:
+        if callback.message and hasattr(callback.message, "answer"):
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception as e:
+                logger.warning(f"Не удалось убрать клавиатуру: {e}")
+            
+            await process_steps(
+                callback.message,
+                user,
+                date_str,
+                pending["steps"],
+                photo_path=pending.get("photo_path") or "",
+            )
+        else:
+            logger.error("callback.message недоступен для ответа")
+            await callback.answer(
+                "Ошибка: не удалось обработать выбор. Попробуй заново.",
+                show_alert=True,
+            )
+    except Exception as e:
+        logger.exception(f"Ошибка в on_date_selected: {e}")
+        await callback.answer(
+            "Произошла ошибка при сохранении. Попробуй ещё раз.",
+            show_alert=True,
         )
+        if callback.message and hasattr(callback.message, "answer"):
+            await callback.message.answer(
+                "❌ Не удалось сохранить шаги. Попробуй отправить скриншот и шаги заново.",
+                parse_mode=ParseMode.HTML,
+            )
 
 
 # ─── Главная функция ────────────────────────────────────────────────
