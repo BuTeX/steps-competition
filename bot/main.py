@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Точка входа — запускает Telegram-бота и FastAPI-сервер.
-Для Railway: API-сервер — основной процесс, бот — в фоне.
+Точка входа — запускает FastAPI-сервер (в фоне) и Telegram-бота (в main thread).
+Для Railway: API-сервер обслуживает HTTP + дашборд, бот — Telegram.
 """
 
 import asyncio
@@ -21,28 +21,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def run_bot():
-    """Запуск Telegram-бота в отдельном потоке."""
-    logger.info("Запуск бота в фоновом потоке...")
-    try:
-        asyncio.run(bot_module.main())
-    except Exception as e:
-        logger.error(f"Бот упал: {e}")
-
-
-def main():
-    """Главная функция — запускает API-сервер (основной) и бота (фон)."""
-    logger.info("=" * 50)
-    logger.info("Steps Competition — Bot + API + Dashboard")
-    logger.info(f"API: http://{API_HOST}:{API_PORT}")
-    logger.info("=" * 50)
-    
-    # Запускаем бота в отдельном потоке
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    logger.info("Бот запущен в фоне")
-    
-    # Запускаем API-сервер (основной процесс — Railway видит порт)
+def run_api():
+    """Запуск API-сервера в отдельном потоке."""
     logger.info(f"API-сервер запускается на {API_HOST}:{API_PORT}")
     uvicorn.run(
         api_app,
@@ -53,5 +33,21 @@ def main():
     )
 
 
+async def main():
+    """Главная функция — API в фоне, бот в main thread."""
+    logger.info("=" * 50)
+    logger.info("Steps Competition — Bot + API + Dashboard")
+    logger.info("=" * 50)
+    
+    # Запускаем API в отдельном потоке
+    api_thread = threading.Thread(target=run_api, daemon=True)
+    api_thread.start()
+    logger.info("API-сервер запущен в фоне")
+    
+    # Запускаем бота в main thread (asyncio)
+    logger.info("Запуск бота...")
+    await bot_module.main()
+
+
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
