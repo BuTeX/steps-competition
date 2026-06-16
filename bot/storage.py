@@ -189,10 +189,10 @@ def upload_screenshot_for_record(
     steps: int,
     local_path: str,
 ) -> str:
-    """Загрузка скриншота с именем ДД.ММ-количество_шагов.jpg."""
+    """Загрузка скриншота с именем Пользователь-ДД.ММ-количество_шагов.jpg."""
     dt = datetime.strptime(date_str, "%Y-%m-%d")
     dd_mm = dt.strftime("%d.%m")
-    filename = f"{dd_mm}-{steps}.jpg"
+    filename = f"{_safe_name(display_name)}-{dd_mm}-{steps}.jpg"
     s3_key = get_screenshot_key(user_id, display_name, filename)
     return upload_file(local_path, s3_key, content_type="image/jpeg")
 

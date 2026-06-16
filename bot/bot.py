@@ -16,7 +16,8 @@ from pathlib import Path
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 
 import database as db
@@ -38,6 +39,50 @@ dp = Dispatcher()
 
 # Фото, ожидающие ввода шагов (user_id -> локальный путь к файлу)
 pending_photos: dict[int, str] = {}
+
+# Выбор даты после получения скриншота + шагов (user_id -> {steps, photo_path})
+pending_date_selections: dict[int, dict] = {}
+
+
+def _last_week_dates() -> list[str]:
+    """Возвращает даты за последние 7 дней (от старой к новой)."""
+    today = datetime.now().date()
+    return [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
+
+
+async def ask_date_selection(
+    user: types.User,
+    steps: int,
+    photo_path: str | None,
+    reply_target: Message,
+):
+    """Показать клавиатуру выбора даты."""
+    dates = _last_week_dates()
+    user_steps = db.get_user_steps(user.id)
+    existing_dates = {str(s.get("Date", "")) for s in user_steps}
+
+    builder = InlineKeyboardBuilder()
+    for date_str in dates:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        label = dt.strftime("%d.%m")
+        if date_str in existing_dates:
+            text = f"{label} ✅ (Перезаписать?)"
+        else:
+            text = f"{label} (Не заполнено)"
+        builder.button(text=text, callback_data=f"date_select:{date_str}")
+
+    builder.adjust(2)
+
+    pending_date_selections[user.id] = {
+        "steps": steps,
+        "photo_path": photo_path,
+    }
+
+    await reply_target.answer(
+        f"📅 Скриншот получен. За какую дату <b>{steps:,}</b> шагов?",
+        reply_markup=builder.as_markup(),
+        parse_mode=ParseMode.HTML,
+    )
 
 
 # ─── Парсинг сообщений ──────────────────────────────────────────────
@@ -232,43 +277,41 @@ async def handle_photo(message: Message):
     caption = message.caption or ""
     
     # Пробуем распарсить шаги из подписи
-    date_str, steps = parse_steps_message(caption)
+    _, steps = parse_steps_message(caption)
     
-    if steps is None:
-        # Сохраняем фото локально и просим шаги
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        
-        # Скачиваем во временный файл
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"pending_{user.id}_{timestamp}.jpg"
-        local_path = LOCAL_SCREENSHOTS_DIR / filename
-        
-        try:
-            await bot.download_file(file.file_path, local_path)
-            
-            # Удаляем предыдущее ожидающее фото, если есть
-            old_path = pending_photos.get(user.id)
-            if old_path:
-                Path(old_path).unlink(missing_ok=True)
-            
-            pending_photos[user.id] = str(local_path)
-            
-            await message.answer(
-                f"📸 Скриншот получен!\n\n"
-                f"Теперь отправь количество шагов:\n"
-                f"<code>15.01 8500</code> или просто <code>8500</code>",
-                parse_mode=ParseMode.HTML,
-            )
-        except Exception as e:
-            logger.error(f"Ошибка сохранения скриншота: {e}")
-            await message.answer("❌ Ошибка сохранения скриншота. Попробуй ещё раз.")
-        
+    # Скачиваем фото локально в любом случае
+    photo = message.photo[-1]
+    file = await bot.get_file(photo.file_id)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"pending_{user.id}_{timestamp}.jpg"
+    local_path = LOCAL_SCREENSHOTS_DIR / filename
+    
+    try:
+        await bot.download_file(file.file_path, local_path)
+    except Exception as e:
+        logger.error(f"Ошибка сохранения скриншота: {e}")
+        await message.answer("❌ Ошибка сохранения скриншота. Попробуй ещё раз.")
         return
     
-    # Если шаги указаны — обрабатываем полностью
-    pending_photos.pop(user.id, None)
-    await process_steps(message, date_str, steps, has_photo=True)
+    # Удаляем предыдущее ожидающее фото
+    old_path = pending_photos.get(user.id)
+    if old_path:
+        Path(old_path).unlink(missing_ok=True)
+    
+    pending_photos[user.id] = str(local_path)
+    
+    if steps is None:
+        await message.answer(
+            f"📸 Скриншот получен!\n\n"
+            f"Теперь отправь количество шагов:\n"
+            f"<code>15.01 8500</code> или просто <code>8500</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    
+    # Если шаги указаны — спрашиваем дату
+    await ask_date_selection(user, steps, str(local_path), message)
 
 
 @dp.message(F.text)
@@ -277,6 +320,7 @@ async def handle_text(message: Message):
     if not message.text or message.text.startswith("/"):
         return
     
+    user = message.from_user
     date_str, steps = parse_steps_message(message.text)
     
     if steps is None:
@@ -291,58 +335,44 @@ async def handle_text(message: Message):
         return
     
     pending_photo_path = pending_photos.pop(user.id, "")
-    await process_steps(message, date_str, steps, has_photo=False, pending_photo_path=pending_photo_path)
+    if pending_photo_path:
+        # Если ждали фото — выбираем дату
+        await ask_date_selection(user, steps, pending_photo_path, message)
+    else:
+        # Текст без фото — обрабатываем сразу
+        await process_steps(message, user, date_str, steps, photo_path="")
 
 
 async def process_steps(
-    message: Message,
+    reply_target: Message,
+    user: types.User,
     date_str: str,
     steps: int,
-    has_photo: bool = False,
-    pending_photo_path: str = "",
+    photo_path: str = "",
 ):
     """Обработка и запись (или обновление) шагов."""
-    user = message.from_user
     display_name = user.full_name or user.username or "Unknown"
     
     # Регистрируем участника
     db.get_or_create_participant(user.id, user.username, display_name)
     
     screenshot_url = ""
-    local_path_to_upload = ""
     
-    # Если есть фото — скачиваем во временный файл
-    if has_photo and message.photo:
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"temp_{timestamp}.jpg"
-        local_path = LOCAL_SCREENSHOTS_DIR / filename
-        
-        try:
-            await bot.download_file(file.file_path, local_path)
-            local_path_to_upload = str(local_path)
-        except Exception as e:
-            logger.error(f"Ошибка загрузки скриншота: {e}")
-    elif pending_photo_path:
-        local_path_to_upload = pending_photo_path
-    
-    # Загружаем скриншот в S3 с правильным именем
-    if local_path_to_upload:
+    # Если есть фото — загружаем в S3 с правильным именем
+    if photo_path:
         try:
             screenshot_url = upload_screenshot_for_record(
                 user_id=user.id,
                 display_name=display_name,
                 date_str=date_str,
                 steps=steps,
-                local_path=local_path_to_upload,
+                local_path=photo_path,
             )
         except Exception as e:
             logger.error(f"Ошибка загрузки скриншота: {e}")
             screenshot_url = ""
         finally:
-            Path(local_path_to_upload).unlink(missing_ok=True)
+            Path(photo_path).unlink(missing_ok=True)
     
     # Записываем в базу (обновляем запись за день, если уже была)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -375,7 +405,37 @@ async def process_steps(
     
     response += "\n💪 Отличная работа! Продолжай в том же духе!"
     
-    await message.answer(response, parse_mode=ParseMode.HTML)
+    await reply_target.answer(response, parse_mode=ParseMode.HTML)
+
+
+@dp.callback_query(F.data.startswith("date_select:"))
+async def on_date_selected(callback: CallbackQuery):
+    """Обработка выбора даты в inline-клавиатуре."""
+    user = callback.from_user
+    date_str = callback.data.split(":", 1)[1]
+    
+    pending = pending_date_selections.pop(user.id, None)
+    if not pending:
+        await callback.answer(
+            "Сессия устарела. Отправь скриншот и шаги заново.",
+            show_alert=True,
+        )
+        return
+    
+    await callback.answer()
+    
+    if callback.message:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await process_steps(
+            callback.message,
+            user,
+            date_str,
+            pending["steps"],
+            photo_path=pending.get("photo_path") or "",
+        )
 
 
 # ─── Главная функция ────────────────────────────────────────────────
