@@ -5,6 +5,7 @@ import { StatsCards } from '@/components/StatsCards';
 import { Leaderboard } from '@/components/Leaderboard';
 import { ActivityChart } from '@/components/ActivityChart';
 import { RecentActivity } from '@/components/RecentActivity';
+import { DailyMatrix } from '@/components/DailyMatrix';
 import './App.css';
 
 function App() {
@@ -12,6 +13,7 @@ function App() {
     records,
     users,
     daily,
+    matrix,
     stats,
     loading,
     error,
@@ -81,6 +83,9 @@ function App() {
                 <RecentActivity records={records} />
               </div>
             </div>
+
+            {/* Daily matrix with screenshots */}
+            <DailyMatrix matrix={matrix} />
 
             {/* Leaderboard */}
             <Leaderboard users={users} />

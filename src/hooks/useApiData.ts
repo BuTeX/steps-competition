@@ -27,6 +27,18 @@ export interface DailyStat {
   participants: number;
 }
 
+export interface DailyMatrixEntry {
+  date: string;
+  steps: number;
+  screenshot_url: string;
+}
+
+export interface DailyMatrixUser {
+  user_id: number;
+  name: string;
+  dates: DailyMatrixEntry[];
+}
+
 export interface GlobalStats {
   total_steps: number;
   total_participants: number;
@@ -39,6 +51,7 @@ interface UseApiDataReturn {
   records: StepRecord[];
   users: UserStat[];
   daily: DailyStat[];
+  matrix: DailyMatrixUser[];
   stats: GlobalStats | null;
   loading: boolean;
   error: string | null;
@@ -55,6 +68,7 @@ export function useApiData(): UseApiDataReturn {
   const [records, setRecords] = useState<StepRecord[]>([]);
   const [users, setUsers] = useState<UserStat[]>([]);
   const [daily, setDaily] = useState<DailyStat[]>([]);
+  const [matrix, setMatrix] = useState<DailyMatrixUser[]>([]);
   const [stats, setStats] = useState<GlobalStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,26 +80,29 @@ export function useApiData(): UseApiDataReturn {
     try {
       const base = getApiUrl();
 
-      const [statsRes, boardRes, dailyRes, recordsRes] = await Promise.all([
+      const [statsRes, boardRes, dailyRes, recordsRes, matrixRes] = await Promise.all([
         fetch(`${base}/api/stats`),
         fetch(`${base}/api/leaderboard`),
         fetch(`${base}/api/daily`),
         fetch(`${base}/api/records?limit=100`),
+        fetch(`${base}/api/daily-matrix`),
       ]);
 
       if (!statsRes.ok) throw new Error(`API ошибка: ${statsRes.status}`);
 
-      const [statsData, boardData, dailyData, recordsData] = await Promise.all([
+      const [statsData, boardData, dailyData, recordsData, matrixData] = await Promise.all([
         statsRes.json(),
         boardRes.json(),
         dailyRes.json(),
         recordsRes.json(),
+        matrixRes.json(),
       ]);
 
       setStats(statsData);
       setUsers(boardData);
       setDaily(dailyData);
       setRecords(recordsData);
+      setMatrix(matrixData);
     } catch (err: any) {
       setError(err.message || 'Ошибка подключения к API');
     } finally {
@@ -103,6 +120,7 @@ export function useApiData(): UseApiDataReturn {
     records,
     users,
     daily,
+    matrix,
     stats,
     loading,
     error,

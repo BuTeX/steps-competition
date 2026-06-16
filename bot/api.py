@@ -59,6 +59,18 @@ class DailyStat(BaseModel):
     participants: int
 
 
+class DailyMatrixEntry(BaseModel):
+    date: str
+    steps: int
+    screenshot_url: str
+
+
+class DailyMatrixUser(BaseModel):
+    user_id: int
+    name: str
+    dates: list[DailyMatrixEntry]
+
+
 class StepRecord(BaseModel):
     Timestamp: str
     Username: str
@@ -127,6 +139,45 @@ async def get_leaderboard():
 async def get_daily():
     """Статистика по дням."""
     return db.get_daily_stats()
+
+
+@app.get("/api/daily-matrix", response_model=list[DailyMatrixUser], tags=["Statistics"])
+async def get_daily_matrix():
+    """Матрица шагов по участникам и дням (для дашборда со скриншотами)."""
+    records = db.get_all_steps()
+    users: dict[str, dict] = {}
+
+    for record in records:
+        user_id = str(record.get("UserID", ""))
+        date = record.get("Date", "")
+        if not user_id or not date:
+            continue
+
+        if user_id not in users:
+            users[user_id] = {
+                "user_id": int(user_id),
+                "name": record.get("DisplayName") or record.get("Username") or "Unknown",
+                "dates": {},
+            }
+
+        existing = users[user_id]["dates"].get(date)
+        if existing is None or record.get("Timestamp", "") > existing.get("Timestamp", ""):
+            users[user_id]["dates"][date] = record
+
+    result = []
+    for user_id in sorted(users, key=lambda uid: users[uid]["name"].lower()):
+        data = users[user_id]
+        dates = [
+            {
+                "date": date,
+                "steps": int(data["dates"][date].get("Steps", 0) or 0),
+                "screenshot_url": data["dates"][date].get("ScreenshotURL", ""),
+            }
+            for date in sorted(data["dates"])
+        ]
+        result.append({**data, "dates": dates})
+
+    return result
 
 
 @app.get("/api/records", response_model=list[StepRecord], tags=["Records"])

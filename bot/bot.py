@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# Скриншоты, ожидающие ввода шагов (user_id -> screenshot_url)
+pending_screenshots: dict[int, str] = {}
+
 
 # ─── Парсинг сообщений ──────────────────────────────────────────────
 def parse_steps_message(text: str) -> tuple[str | None, int | None]:
@@ -248,6 +251,9 @@ async def handle_photo(message: Message):
             url = upload_screenshot(user.id, str(local_path), filename)
             # Удаляем локальный файл
             local_path.unlink(missing_ok=True)
+
+            # Запоминаем скриншот до тех пор, пока пользователь не пришлёт шаги
+            pending_screenshots[user.id] = url
             
             await message.answer(
                 f"📸 Скриншот сохранён в облаке!\n\n"
@@ -262,6 +268,7 @@ async def handle_photo(message: Message):
         return
     
     # Если шаги указаны — обрабатываем полностью
+    pending_screenshots.pop(user.id, None)
     await process_steps(message, date_str, steps, has_photo=True)
 
 
@@ -284,11 +291,18 @@ async def handle_text(message: Message):
         )
         return
     
-    await process_steps(message, date_str, steps, has_photo=False)
+    screenshot_url = pending_screenshots.pop(user.id, "")
+    await process_steps(message, date_str, steps, has_photo=False, pending_screenshot_url=screenshot_url)
 
 
-async def process_steps(message: Message, date_str: str, steps: int, has_photo: bool = False):
-    """Обработка и запись шагов."""
+async def process_steps(
+    message: Message,
+    date_str: str,
+    steps: int,
+    has_photo: bool = False,
+    pending_screenshot_url: str = "",
+):
+    """Обработка и запись (или обновление) шагов."""
     user = message.from_user
     display_name = user.full_name or user.username or "Unknown"
     
@@ -313,12 +327,14 @@ async def process_steps(message: Message, date_str: str, steps: int, has_photo: 
         except Exception as e:
             logger.error(f"Ошибка загрузки скриншота: {e}")
             screenshot_url = ""
+    elif pending_screenshot_url:
+        screenshot_url = pending_screenshot_url
     
-    # Записываем в базу
+    # Записываем в базу (обновляем запись за день, если уже была)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     username = user.username or ""
     
-    record = db.add_step_record(
+    record, updated = db.add_or_update_step_record(
         timestamp=timestamp,
         username=username,
         user_id=user.id,
@@ -333,8 +349,9 @@ async def process_steps(message: Message, date_str: str, steps: int, has_photo: 
     # Формируем ответ
     date_display = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
     
+    action = "Обновлено" if updated else "Записано"
     response = (
-        f"✅ <b>Записано в облако!</b>\n\n"
+        f"✅ <b>{action} в облако!</b>\n\n"
         f"📅 Дата: <b>{date_display}</b>\n"
         f"👣 Шаги: <b>{steps:,}</b>\n"
     )

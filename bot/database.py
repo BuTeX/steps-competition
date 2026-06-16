@@ -91,6 +91,58 @@ def add_step_record(
     }
 
 
+def add_or_update_step_record(
+    timestamp: str,
+    username: str,
+    user_id: int,
+    display_name: str,
+    date: str,
+    steps: int,
+    screenshot_url: str = "",
+    verified: str = "No",
+    notes: str = "",
+) -> tuple[dict, bool]:
+    """
+    Добавление или обновление записи о шагах.
+    Одна запись на пользователя на день — при повторной отправке
+    обновляются шаги (скриншот сохраняется, если не передан новый).
+    """
+    records = get_all_steps()
+    new_record = {
+        "Timestamp": timestamp,
+        "Username": username,
+        "UserID": str(user_id),
+        "DisplayName": display_name,
+        "Date": date,
+        "Steps": str(steps),
+        "ScreenshotURL": screenshot_url,
+        "Verified": verified,
+        "Notes": notes,
+    }
+
+    updated = False
+    for i, record in enumerate(records):
+        if (
+            str(record.get("UserID", "")) == str(user_id)
+            and record.get("Date", "") == date
+        ):
+            # Сохраняем старый скриншот, если новый не передан
+            if not screenshot_url:
+                new_record["ScreenshotURL"] = record.get("ScreenshotURL", "")
+            records[i] = new_record
+            updated = True
+            break
+
+    if not updated:
+        records.append(new_record)
+
+    write_csv(BUCKET_STEPS_FILE, _list_to_csv(records, STEPS_FIELDS))
+    action = "Обновлена" if updated else "Добавлена"
+    logger.info(f"{action} запись: {display_name} - {date}: {steps} шагов")
+
+    return new_record, updated
+
+
 def get_all_steps() -> list[dict]:
     """Получение всех записей о шагах."""
     csv_text = read_csv(BUCKET_STEPS_FILE)
