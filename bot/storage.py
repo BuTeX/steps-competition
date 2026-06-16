@@ -1,10 +1,12 @@
 """
 Работа с Yandex Object Storage через S3 API.
-Скриншоты хранятся в папках: screenshots/{user_id}/
+Скриншоты хранятся в папках: screenshots/{имя_участника}_{user_id}/{ДД.ММ-количество_шагов}.jpg
 """
 
 import io
 import logging
+import re
+import urllib.parse
 from datetime import datetime
 
 import boto3
@@ -135,6 +137,16 @@ def download_file(s3_key: str) -> bytes:
         raise
 
 
+def delete_file(s3_key: str):
+    """Удаление файла из Object Storage."""
+    s3 = get_s3()
+    try:
+        s3.delete_object(Bucket=YC_BUCKET_NAME, Key=s3_key)
+        logger.info(f"Файл удалён: {s3_key}")
+    except ClientError as e:
+        logger.error(f"Ошибка удаления файла {s3_key}: {e}")
+
+
 def file_exists(s3_key: str) -> bool:
     """Проверка существования файла."""
     s3 = get_s3()
@@ -146,26 +158,70 @@ def file_exists(s3_key: str) -> bool:
 
 
 # ─── Скриншоты ──────────────────────────────────────────────────────
-def get_screenshot_key(user_id: int, filename: str) -> str:
-    """Получение ключа для скриншота: screenshots/{user_id}/{filename}"""
-    return f"{BUCKET_SCREENSHOTS_DIR}/{user_id}/{filename}"
+def _safe_name(name: str) -> str:
+    """Безопасное имя папки: буквы, цифры, дефисы."""
+    safe = re.sub(r"[^\w\s-]", "", name, flags=re.UNICODE)
+    safe = re.sub(r"[-\s]+", "-", safe).strip("-")
+    return safe or "unknown"
 
 
-def upload_screenshot(user_id: int, local_path: str, filename: str) -> str:
-    """Загрузка скриншота в папку пользователя."""
-    s3_key = get_screenshot_key(user_id, filename)
+def _user_folder(display_name: str, user_id: int) -> str:
+    """Папка пользователя: имя + id для уникальности."""
+    return f"{_safe_name(display_name)}_{user_id}"
+
+
+def get_screenshot_key(user_id: int, display_name: str, filename: str) -> str:
+    """Получение ключа для скриншота."""
+    folder = _user_folder(display_name, user_id)
+    return f"{BUCKET_SCREENSHOTS_DIR}/{folder}/{filename}"
+
+
+def upload_screenshot(user_id: int, local_path: str, filename: str, display_name: str = "") -> str:
+    """Загрузка скриншота в папку пользователя (deprecated, лучше upload_screenshot_for_record)."""
+    s3_key = get_screenshot_key(user_id, display_name or str(user_id), filename)
     return upload_file(local_path, s3_key, content_type="image/jpeg")
 
 
-def get_screenshots_prefix(user_id: int) -> str:
+def upload_screenshot_for_record(
+    user_id: int,
+    display_name: str,
+    date_str: str,
+    steps: int,
+    local_path: str,
+) -> str:
+    """Загрузка скриншота с именем ДД.ММ-количество_шагов.jpg."""
+    dt = datetime.strptime(date_str, "%Y-%m-%d")
+    dd_mm = dt.strftime("%d.%m")
+    filename = f"{dd_mm}-{steps}.jpg"
+    s3_key = get_screenshot_key(user_id, display_name, filename)
+    return upload_file(local_path, s3_key, content_type="image/jpeg")
+
+
+def delete_screenshot_by_url(url: str):
+    """Удаление скриншота по его URL."""
+    if not url:
+        return
+    prefix = f"{YC_ENDPOINT}/{YC_BUCKET_NAME}/"
+    if not url.startswith(prefix):
+        return
+    key = url[len(prefix):]
+    key = urllib.parse.unquote(key)
+    delete_file(key)
+
+
+def get_screenshots_prefix(user_id: int, display_name: str = "") -> str:
     """Префикс для скриншотов пользователя."""
-    return f"{BUCKET_SCREENSHOTS_DIR}/{user_id}/"
+    if display_name:
+        folder = _user_folder(display_name, user_id)
+        return f"{BUCKET_SCREENSHOTS_DIR}/{folder}/"
+    return f"{BUCKET_SCREENSHOTS_DIR}/"
 
 
-def list_user_screenshots(user_id: int) -> list[dict]:
+def list_user_screenshots(user_id: int, display_name: str = "") -> list[dict]:
     """Список скриншотов пользователя."""
     s3 = get_s3()
-    prefix = get_screenshots_prefix(user_id)
+    prefix = get_screenshots_prefix(user_id, display_name)
+    suffix = f"_{user_id}/"
     
     try:
         response = s3.list_objects_v2(
@@ -175,6 +231,9 @@ def list_user_screenshots(user_id: int) -> list[dict]:
         files = []
         for obj in response.get("Contents", []):
             key = obj["Key"]
+            # Если имя не передано, фильтруем по суффиксу папки _{user_id}/
+            if not display_name and suffix not in key:
+                continue
             filename = key.split("/")[-1]
             url = f"{YC_ENDPOINT}/{YC_BUCKET_NAME}/{key}"
             files.append({
@@ -208,6 +267,39 @@ def append_to_csv(s3_key: str, line: str):
         current += "\n"
     current += line + "\n"
     write_csv(s3_key, current)
+
+
+# ─── Сброс данных ───────────────────────────────────────────────────
+def reset_all_data():
+    """Полная очистка всех внесённых данных (steps, participants, screenshots)."""
+    s3 = get_s3()
+
+    # Очищаем CSV-файлы
+    steps_headers = "Timestamp,Username,UserID,DisplayName,Date,Steps,ScreenshotURL,Verified,Notes\n"
+    write_csv(BUCKET_STEPS_FILE, steps_headers)
+    logger.info(f"Очищен файл {BUCKET_STEPS_FILE}")
+
+    participants_headers = "UserID,Username,DisplayName,JoinedAt,Active\n"
+    write_csv(BUCKET_PARTICIPANTS_FILE, participants_headers)
+    logger.info(f"Очищен файл {BUCKET_PARTICIPANTS_FILE}")
+
+    # Удаляем все скриншоты
+    try:
+        response = s3.list_objects_v2(
+            Bucket=YC_BUCKET_NAME,
+            Prefix=f"{BUCKET_SCREENSHOTS_DIR}/",
+        )
+        objects = response.get("Contents", [])
+        if objects:
+            s3.delete_objects(
+                Bucket=YC_BUCKET_NAME,
+                Delete={"Objects": [{"Key": obj["Key"]} for obj in objects]},
+            )
+            logger.info(f"Удалено скриншотов: {len(objects)}")
+        else:
+            logger.info("Скриншотов для удаления не найдено")
+    except ClientError as e:
+        logger.error(f"Ошибка удаления скриншотов: {e}")
 
 
 # ─── Инициализация ──────────────────────────────────────────────────

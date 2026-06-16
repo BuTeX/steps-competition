@@ -12,6 +12,7 @@ from storage import (
     BUCKET_PARTICIPANTS_FILE,
     BUCKET_STEPS_FILE,
     append_to_csv,
+    delete_screenshot_by_url,
     read_csv,
     upload_bytes,
 )
@@ -127,8 +128,12 @@ def add_or_update_step_record(
             and record.get("Date", "") == date
         ):
             # Сохраняем старый скриншот, если новый не передан
+            old_screenshot = record.get("ScreenshotURL", "")
             if not screenshot_url:
-                new_record["ScreenshotURL"] = record.get("ScreenshotURL", "")
+                new_record["ScreenshotURL"] = old_screenshot
+            elif old_screenshot and old_screenshot != screenshot_url:
+                # Удаляем старый скриншот, если заменяем на новый
+                delete_screenshot_by_url(old_screenshot)
             records[i] = new_record
             updated = True
             break

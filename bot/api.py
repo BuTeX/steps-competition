@@ -200,7 +200,9 @@ async def get_user(user_id: int):
 @app.get("/api/users/{user_id}/screenshots", response_model=list[ScreenshotInfo], tags=["Users"])
 async def get_user_screenshots_api(user_id: int):
     """Скриншоты пользователя."""
-    return list_user_screenshots(user_id)
+    user_stats = db.get_user_stats(user_id)
+    display_name = user_stats["name"] if user_stats else ""
+    return list_user_screenshots(user_id, display_name)
 
 
 @app.get("/api/records/recent", response_model=list[StepRecord], tags=["Records"])

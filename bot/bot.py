@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 import database as db
 from config import BOT_TOKEN, LOCAL_SCREENSHOTS_DIR, API_BASE_URL
-from storage import init_storage, upload_screenshot
+from storage import init_storage, upload_screenshot_for_record
 
 load_dotenv()
 
@@ -36,8 +36,8 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Скриншоты, ожидающие ввода шагов (user_id -> screenshot_url)
-pending_screenshots: dict[int, str] = {}
+# Фото, ожидающие ввода шагов (user_id -> локальный путь к файлу)
+pending_photos: dict[int, str] = {}
 
 
 # ─── Парсинг сообщений ──────────────────────────────────────────────
@@ -235,40 +235,39 @@ async def handle_photo(message: Message):
     date_str, steps = parse_steps_message(caption)
     
     if steps is None:
-        # Сохраняем скриншот и просим шаги
+        # Сохраняем фото локально и просим шаги
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
         
-        # Скачиваем
+        # Скачиваем во временный файл
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{timestamp}.jpg"
+        filename = f"pending_{user.id}_{timestamp}.jpg"
         local_path = LOCAL_SCREENSHOTS_DIR / filename
         
-        await bot.download_file(file.file_path, local_path)
-        
-        # Загружаем в S3
         try:
-            url = upload_screenshot(user.id, str(local_path), filename)
-            # Удаляем локальный файл
-            local_path.unlink(missing_ok=True)
-
-            # Запоминаем скриншот до тех пор, пока пользователь не пришлёт шаги
-            pending_screenshots[user.id] = url
+            await bot.download_file(file.file_path, local_path)
+            
+            # Удаляем предыдущее ожидающее фото, если есть
+            old_path = pending_photos.get(user.id)
+            if old_path:
+                Path(old_path).unlink(missing_ok=True)
+            
+            pending_photos[user.id] = str(local_path)
             
             await message.answer(
-                f"📸 Скриншот сохранён в облаке!\n\n"
+                f"📸 Скриншот получен!\n\n"
                 f"Теперь отправь количество шагов:\n"
                 f"<code>15.01 8500</code> или просто <code>8500</code>",
                 parse_mode=ParseMode.HTML,
             )
         except Exception as e:
-            logger.error(f"Ошибка загрузки скриншота: {e}")
+            logger.error(f"Ошибка сохранения скриншота: {e}")
             await message.answer("❌ Ошибка сохранения скриншота. Попробуй ещё раз.")
         
         return
     
     # Если шаги указаны — обрабатываем полностью
-    pending_screenshots.pop(user.id, None)
+    pending_photos.pop(user.id, None)
     await process_steps(message, date_str, steps, has_photo=True)
 
 
@@ -291,8 +290,8 @@ async def handle_text(message: Message):
         )
         return
     
-    screenshot_url = pending_screenshots.pop(user.id, "")
-    await process_steps(message, date_str, steps, has_photo=False, pending_screenshot_url=screenshot_url)
+    pending_photo_path = pending_photos.pop(user.id, "")
+    await process_steps(message, date_str, steps, has_photo=False, pending_photo_path=pending_photo_path)
 
 
 async def process_steps(
@@ -300,7 +299,7 @@ async def process_steps(
     date_str: str,
     steps: int,
     has_photo: bool = False,
-    pending_screenshot_url: str = "",
+    pending_photo_path: str = "",
 ):
     """Обработка и запись (или обновление) шагов."""
     user = message.from_user
@@ -310,25 +309,40 @@ async def process_steps(
     db.get_or_create_participant(user.id, user.username, display_name)
     
     screenshot_url = ""
+    local_path_to_upload = ""
     
-    # Если есть фото — сохраняем в S3
+    # Если есть фото — скачиваем во временный файл
     if has_photo and message.photo:
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{timestamp}.jpg"
+        filename = f"temp_{timestamp}.jpg"
         local_path = LOCAL_SCREENSHOTS_DIR / filename
         
         try:
             await bot.download_file(file.file_path, local_path)
-            screenshot_url = upload_screenshot(user.id, str(local_path), filename)
-            local_path.unlink(missing_ok=True)
+            local_path_to_upload = str(local_path)
+        except Exception as e:
+            logger.error(f"Ошибка загрузки скриншота: {e}")
+    elif pending_photo_path:
+        local_path_to_upload = pending_photo_path
+    
+    # Загружаем скриншот в S3 с правильным именем
+    if local_path_to_upload:
+        try:
+            screenshot_url = upload_screenshot_for_record(
+                user_id=user.id,
+                display_name=display_name,
+                date_str=date_str,
+                steps=steps,
+                local_path=local_path_to_upload,
+            )
         except Exception as e:
             logger.error(f"Ошибка загрузки скриншота: {e}")
             screenshot_url = ""
-    elif pending_screenshot_url:
-        screenshot_url = pending_screenshot_url
+        finally:
+            Path(local_path_to_upload).unlink(missing_ok=True)
     
     # Записываем в базу (обновляем запись за день, если уже была)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
