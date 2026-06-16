@@ -15,6 +15,7 @@ from storage import (
     delete_screenshot_by_url,
     read_csv,
     upload_bytes,
+    write_csv,
 )
 
 logger = logging.getLogger(__name__)
