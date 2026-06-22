@@ -39,9 +39,14 @@ if RAILWAY_PUBLIC_DOMAIN:
 else:
     API_BASE_URL = os.getenv("API_BASE_URL", f"http://{API_HOST}:{API_PORT}")
 
+# ─── Администратор ──────────────────────────────────────────────────
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
 # ─── Общие настройки ────────────────────────────────────────────────
 LOCAL_SCREENSHOTS_DIR = Path("screenshots")
 LOCAL_SCREENSHOTS_DIR.mkdir(exist_ok=True)
+BACKUPS_DIR = Path("backups")
+BACKUPS_DIR.mkdir(exist_ok=True)
 
 
 def validate_config():

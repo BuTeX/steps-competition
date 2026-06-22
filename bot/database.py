@@ -149,6 +149,83 @@ def add_or_update_step_record(
     return new_record, updated
 
 
+def update_step_record(
+    timestamp: str,
+    user_id: int,
+    old_date: str,
+    new_date: str | None = None,
+    steps: int | None = None,
+    notes: str | None = None,
+) -> dict | None:
+    """
+    Редактирование существующей записи о шагах по ключу Timestamp + UserID + Date.
+    Обновляет только переданные поля. Возвращает обновлённую запись или None.
+    """
+    records = get_all_steps()
+    target = None
+    target_index = -1
+
+    for i, record in enumerate(records):
+        if (
+            record.get("Timestamp", "") == timestamp
+            and str(record.get("UserID", "")) == str(user_id)
+            and record.get("Date", "") == old_date
+        ):
+            target = record
+            target_index = i
+            break
+
+    if target is None or target_index < 0:
+        return None
+
+    if new_date is not None:
+        target["Date"] = new_date
+    if steps is not None:
+        target["Steps"] = str(steps)
+    if notes is not None:
+        target["Notes"] = notes
+
+    # Обновляем timestamp операции, чтобы фиксировать изменение
+    target["Timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    records[target_index] = target
+    write_csv(BUCKET_STEPS_FILE, _list_to_csv(records, STEPS_FIELDS))
+    logger.info(f"Отредактирована запись: {target.get('DisplayName')} - {target.get('Date')}: {target.get('Steps')} шагов")
+    return target
+
+
+def delete_step_record(timestamp: str, user_id: int, date: str) -> bool:
+    """
+    Удаление записи о шагах по ключу Timestamp + UserID + Date.
+    При наличии скриншота удаляет его из S3. Возвращает True если запись найдена и удалена.
+    """
+    records = get_all_steps()
+    original_len = len(records)
+
+    screenshot_url = ""
+    filtered = []
+    for record in records:
+        if (
+            record.get("Timestamp", "") == timestamp
+            and str(record.get("UserID", "")) == str(user_id)
+            and record.get("Date", "") == date
+        ):
+            screenshot_url = record.get("ScreenshotURL", "")
+            continue
+        filtered.append(record)
+
+    if len(filtered) == original_len:
+        return False
+
+    write_csv(BUCKET_STEPS_FILE, _list_to_csv(filtered, STEPS_FIELDS))
+
+    if screenshot_url:
+        delete_screenshot_by_url(screenshot_url)
+
+    logger.info(f"Удалена запись пользователя {user_id} за {date}")
+    return True
+
+
 def get_all_steps() -> list[dict]:
     """Получение всех записей о шагах."""
     csv_text = read_csv(BUCKET_STEPS_FILE)

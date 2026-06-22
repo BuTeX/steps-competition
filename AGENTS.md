@@ -11,6 +11,7 @@ Telegram-бот + веб-дашборд для командного конкур
 - Бот сохраняет всё в Yandex Object Storage (S3) в CSV + файлы скриншотов.
 - Дашборд показывает рейтинг, графики, статистику и таблицу дней со скриншотами.
 - Деплоится на Railway (бот + API + дашборд в одном контейнере).
+- `vite.config.ts` использует `base: "/"`, чтобы asset-файлы грузились по абсолютным путям и SPA-роуты (`/admin`) работали корректно.
 
 ---
 
@@ -20,11 +21,12 @@ Telegram-бот + веб-дашборд для командного конкур
 Telegram-бот (aiogram 3.x)  →  Yandex Object Storage  ←  FastAPI  ←  React Dashboard
   aiogram 3.x                   S3-совместимое            REST API      SPA (Vite)
   Python 3.12                   Бакет: steps-competition   /api/*       / (index.html)
-  asyncio в main thread         CSV: data/steps.csv        /api/stats
+  asyncio в main thread         CSV: data/steps.csv        /api/stats   /admin
   uvicorn в фоновом thread      CSV: data/participants.csv /api/leaderboard
                                                            /api/daily
                                                            /api/daily-matrix
                                                            /api/records
+                                                           /api/admin/*
 ```
 
 ### Важное архитектурное решение
@@ -67,6 +69,7 @@ screenshots/VictorDulets_123456/VictorDulets-15.05-10341.jpg
 │   ├── main.py               # Точка входа: API в фоне, бот в main thread
 │   ├── bot.py                # Telegram-бот (aiogram 3.x)
 │   ├── api.py                # FastAPI REST API
+│   ├── admin_routes.py       # Административные endpoints
 │   ├── database.py           # Работа с CSV в S3
 │   ├── storage.py            # Yandex Object Storage (boto3)
 │   ├── config.py             # Конфигурация из env-переменных
@@ -75,10 +78,13 @@ screenshots/VictorDulets_123456/VictorDulets-15.05-10341.jpg
 │   └── .env.example          # Шаблон переменных
 │
 ├── src/                       # React frontend (dashboard)
-│   ├── App.tsx               # Главный компонент
+│   ├── App.tsx               # Главный компонент + роутинг
 │   ├── App.css               # Стили
 │   ├── pages/Home.tsx        # Заглушка
+│   ├── pages/DashboardPage.tsx # Дашборд
+│   ├── pages/AdminPage.tsx   # Панель администратора
 │   ├── hooks/useApiData.ts   # Хук для получения данных из API
+│   ├── hooks/useAdmin.ts     # Хук для admin API
 │   ├── components/
 │   │   ├── StatsCards.tsx    # Карточки статистики
 │   │   ├── Leaderboard.tsx   # Таблица рейтинга
@@ -138,6 +144,7 @@ pydantic==2.10.5         # Валидация
 | `API_PORT` | 8000 | Порт API |
 | `PORT` | — | Railway подставляет автоматически |
 | `RAILWAY_PUBLIC_DOMAIN` | — | Railway подставляет автоматически |
+| `ADMIN_PASSWORD` | — | Пароль для входа в `/admin`. Без него админка недоступна. |
 
 ### Локальная разработка
 Создать файл `bot/.env` (не коммитить в git!):
@@ -146,6 +153,9 @@ BOT_TOKEN=your_token
 YC_ACCESS_KEY=your_key
 YC_SECRET_KEY=your_secret
 YC_BUCKET_NAME=steps-competition
+
+# Админ-панель (опционально)
+ADMIN_PASSWORD=your_secure_password
 ```
 
 ---
@@ -171,6 +181,14 @@ YC_BUCKET_NAME=steps-competition
 - `Leaderboard` — общий рейтинг.
 - `RecentActivity` — последние записи.
 - Автообновление каждые 30 секунд.
+- Ссылка на `/admin` в шапке.
+
+### Админ-панель (`/admin`)
+- Вход по паролю из `ADMIN_PASSWORD`.
+- Редактирование и удаление записей о шагах.
+- Создание ZIP-бекапов (`data/steps.csv`, `data/participants.csv`, все скриншоты).
+- Скачивание готовых бекапов.
+- Подтверждение удаления через модальное окно.
 
 ---
 
@@ -187,6 +205,20 @@ YC_BUCKET_NAME=steps-competition
 | `GET /api/records/recent?limit=N` | Последние записи для виджета |
 | `GET /api/users/{user_id}` | Данные пользователя |
 | `GET /api/users/{user_id}/screenshots` | Скриншоты пользователя |
+
+### Admin endpoints (требуют `ADMIN_PASSWORD`)
+
+| Endpoint | Описание |
+|----------|----------|
+| `POST /api/admin/login` | Вход, устанавливает cookie `admin_session` |
+| `POST /api/admin/logout` | Выход |
+| `GET /api/admin/me` | Проверка сессии |
+| `GET /api/admin/records?limit=&offset=&search=&sort_by=&sort_order=` | Список записей с фильтрами |
+| `PUT /api/admin/records` | Редактировать запись (date, steps, notes) |
+| `DELETE /api/admin/records` | Удалить запись (+ скриншот) |
+| `POST /api/admin/backup` | Создать ZIP-бекап в S3 |
+| `GET /api/admin/backups` | Список бекапов |
+| `GET /api/admin/backup/download/{backup_id}` | Скачать бекап |
 
 ---
 
@@ -271,15 +303,18 @@ git push
 
 10. **CSV-экранирование может быть несовместимо с `csv.DictReader`**
     - `database._escape_csv` обрабатывает `,`, `"`, `\n`.
-    - Если значение содержит `` или другие спецсимволы, могут быть проблемы при парсинге.
+    - Если значение содержит `
+` или другие спецсимволы, могут быть проблемы при парсинге.
     - Пользовательские имена из Telegram могут содержать эмодзи и спецсимволы.
 
 11. **`delete_objects` в `reset_all_data` ограничен 1000 объектами**
     - Если скриншотов больше 1000 — скрипт удалит только первую партию.
     - Нужна пагинация.
 
-12. **Нет авторизации на дашборде и API**
-    - Любой, у кого есть URL, может видеть данные и скриншоты (если они публичные).
+12. **Авторизация есть только в админке**
+    - Основной дашборд и публичные API остаются открытыми.
+    - Админ-панель защищена паролем через cookie-сессию; сессии хранятся в памяти и сбрасываются при перезапуске.
+    - Без `ADMIN_PASSWORD` админ-руты возвращают 503.
 
 ### Низкий приоритет
 

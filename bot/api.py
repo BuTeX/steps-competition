@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import database as db
+import admin_routes
 from storage import list_user_screenshots
 
 logger = logging.getLogger(__name__)
@@ -211,6 +212,10 @@ async def get_recent_records(limit: int = 20):
     records = db.get_all_steps()
     records.sort(key=lambda x: x.get("Timestamp", ""), reverse=True)
     return records[:limit]
+
+
+# ─── Admin routes ───────────────────────────────────────────────────
+app.include_router(admin_routes.router)
 
 
 # ─── Static files (Dashboard) ──────────────────────────────────────

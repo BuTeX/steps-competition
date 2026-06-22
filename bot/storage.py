@@ -7,6 +7,7 @@ import io
 import logging
 import re
 import urllib.parse
+import zipfile
 from datetime import datetime
 
 import boto3
@@ -300,6 +301,88 @@ def reset_all_data():
             logger.info("Скриншотов для удаления не найдено")
     except ClientError as e:
         logger.error(f"Ошибка удаления скриншотов: {e}")
+
+
+# ─── Бекапы ─────────────────────────────────────────────────────────
+def _list_all_objects(prefix: str) -> list[dict]:
+    """Пагинированный список всех объектов в бакете по префиксу."""
+    s3 = get_s3()
+    objects = []
+    continuation_token = None
+    while True:
+        kwargs = {"Bucket": YC_BUCKET_NAME, "Prefix": prefix}
+        if continuation_token:
+            kwargs["ContinuationToken"] = continuation_token
+        response = s3.list_objects_v2(**kwargs)
+        objects.extend(response.get("Contents", []))
+        if not response.get("IsTruncated"):
+            break
+        continuation_token = response.get("NextContinuationToken")
+    return objects
+
+
+def create_backup() -> dict:
+    """Создание ZIP-бекапа: CSV-файлы + все скриншоты. Возвращает метаинформацию."""
+    s3 = get_s3()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_id = f"backup_{timestamp}.zip"
+    backup_key = f"backups/{backup_id}"
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        # CSV-файлы
+        for key, arcname in [
+            (BUCKET_STEPS_FILE, "data/steps.csv"),
+            (BUCKET_PARTICIPANTS_FILE, "data/participants.csv"),
+        ]:
+            data = download_file(key)
+            if data:
+                zf.writestr(arcname, data.decode("utf-8"))
+
+        # Скриншоты
+        screenshots = _list_all_objects(f"{BUCKET_SCREENSHOTS_DIR}/")
+        for obj in screenshots:
+            key = obj["Key"]
+            data = download_file(key)
+            if data:
+                zf.writestr(key, data)
+
+    buffer.seek(0)
+    upload_bytes(buffer.getvalue(), backup_key, content_type="application/zip")
+    logger.info(f"Создан бекап: {backup_key}")
+
+    return {
+        "backup_id": backup_id,
+        "key": backup_key,
+        "url": f"{YC_ENDPOINT}/{YC_BUCKET_NAME}/{backup_key}",
+        "created_at": datetime.now().isoformat(),
+        "size": buffer.tell(),
+    }
+
+
+def list_backups() -> list[dict]:
+    """Список созданных бекапов."""
+    backups = _list_all_objects("backups/")
+    result = []
+    for obj in backups:
+        key = obj["Key"]
+        filename = key.split("/")[-1]
+        if not filename.endswith(".zip"):
+            continue
+        result.append({
+            "backup_id": filename,
+            "key": key,
+            "url": f"{YC_ENDPOINT}/{YC_BUCKET_NAME}/{key}",
+            "created_at": obj["LastModified"].isoformat(),
+            "size": obj["Size"],
+        })
+    return sorted(result, key=lambda x: x["created_at"], reverse=True)
+
+
+def download_backup(backup_id: str) -> bytes:
+    """Скачивание бекапа по ID."""
+    key = f"backups/{backup_id}"
+    return download_file(key)
 
 
 # ─── Инициализация ──────────────────────────────────────────────────

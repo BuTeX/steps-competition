@@ -6,6 +6,7 @@
 |-----------|-----|----------|
 | **Дашборд** | `https://<твой-проект>.railway.app` | Веб-страница с рейтингом |
 | **API** | `https://<твой-проект>.railway.app/api/...` | REST API |
+| **Админ-панель** | `https://<твой-проект>.railway.app/admin` | Управление записями и бекапами |
 | **Бот** | работает в main thread (asyncio) | Telegram-бот |
 
 ---
@@ -70,6 +71,7 @@ git push -u origin main
 | `YC_BUCKET_NAME` | Название бакета (например `steps-competition`) |
 | `YC_REGION` | `ru-central1` |
 | `YC_ENDPOINT` | `https://storage.yandexcloud.net` |
+| `ADMIN_PASSWORD` (опц.) | Пароль для `/admin` |
 
 > Railway **автоматически** добавит переменную `PORT` и `RAILWAY_PUBLIC_DOMAIN`.
 
@@ -107,6 +109,13 @@ https://<твой-домен>.railway.app/api/health
 ```
 Должен вернуть: `{"status": "ok", ...}`
 
+### Админ-панель
+Если задан `ADMIN_PASSWORD`, открой:
+```
+https://<твой-домен>.railway.app/admin
+```
+Войди с паролем — там можно редактировать записи, удалять их и создавать ZIP-бекапы.
+
 ### Бот
 Напиши своему боту в Telegram:
 - `/start` — должен ответить приветствием
@@ -125,6 +134,7 @@ YC_SECRET_KEY=YCPkK...
 YC_BUCKET_NAME=steps-competition
 YC_REGION=ru-central1
 YC_ENDPOINT=https://storage.yandexcloud.net
+ADMIN_PASSWORD=your_secure_password
 ```
 
 Railway автоматически добавит:
