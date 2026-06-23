@@ -14,6 +14,14 @@ export interface AdminRecord {
   Notes: string;
 }
 
+export interface AdminParticipant {
+  UserID: string;
+  Username: string;
+  DisplayName: string;
+  JoinedAt: string;
+  Active: string;
+}
+
 export interface RecordsResponse {
   records: AdminRecord[];
   total: number;
@@ -48,6 +56,19 @@ async function apiFetch(input: string, init?: RequestInit) {
     return res.json();
   }
   return res.blob();
+}
+
+async function multipartFetch(input: string, formData: FormData, init?: RequestInit) {
+  const res = await fetch(`${API_BASE}${input}`, {
+    credentials: 'include',
+    ...init,
+    body: formData,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => 'Ошибка запроса');
+    throw new Error(text);
+  }
+  return res.json();
 }
 
 export function useAdminAuth() {
@@ -93,6 +114,27 @@ export function useAdminAuth() {
   return { authenticated, loading, error, login, logout, check };
 }
 
+export function useAdminParticipants() {
+  const [participants, setParticipants] = useState<AdminParticipant[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchParticipants = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiFetch('/api/admin/participants');
+      setParticipants((res as AdminParticipant[]) || []);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Ошибка загрузки участников');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return { participants, loading, error, fetchParticipants };
+}
+
 export function useAdminRecords() {
   const [data, setData] = useState<RecordsResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -123,6 +165,21 @@ export function useAdminRecords() {
     }
   }, []);
 
+  const createRecord = useCallback(async (payload: {
+    user_id: number;
+    display_name: string;
+    username?: string;
+    date: string;
+    steps: number;
+    notes?: string;
+  }) => {
+    const res = await apiFetch('/api/admin/records', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    return res as { success: boolean; record: AdminRecord };
+  }, []);
+
   const updateRecord = useCallback(async (payload: {
     timestamp: string;
     user_id: number;
@@ -135,7 +192,35 @@ export function useAdminRecords() {
       method: 'PUT',
       body: JSON.stringify(payload),
     });
-    return res;
+    return res as { success: boolean; record: AdminRecord };
+  }, []);
+
+  const uploadScreenshot = useCallback(async (
+    timestamp: string,
+    user_id: number,
+    date: string,
+    file: File
+  ) => {
+    const formData = new FormData();
+    formData.append('screenshot', file);
+    const res = await multipartFetch(
+      `/api/admin/records/${encodeURIComponent(timestamp)}/screenshot?user_id=${user_id}&date=${encodeURIComponent(date)}`,
+      formData,
+      { method: 'PUT' }
+    );
+    return res as { success: boolean; record: AdminRecord };
+  }, []);
+
+  const deleteScreenshot = useCallback(async (
+    timestamp: string,
+    user_id: number,
+    date: string
+  ) => {
+    const res = await apiFetch(
+      `/api/admin/records/${encodeURIComponent(timestamp)}/screenshot?user_id=${user_id}&date=${encodeURIComponent(date)}`,
+      { method: 'DELETE' }
+    );
+    return res as { success: boolean; record: AdminRecord };
   }, []);
 
   const deleteRecord = useCallback(async (payload: {
@@ -149,7 +234,17 @@ export function useAdminRecords() {
     });
   }, []);
 
-  return { data, loading, error, fetchRecords, updateRecord, deleteRecord };
+  return {
+    data,
+    loading,
+    error,
+    fetchRecords,
+    createRecord,
+    updateRecord,
+    uploadScreenshot,
+    deleteScreenshot,
+    deleteRecord,
+  };
 }
 
 export function useAdminBackups() {

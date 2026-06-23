@@ -188,6 +188,25 @@ YC_BUCKET_NAME=steps-competition
 | `GET /api/users/{user_id}` | Данные пользователя |
 | `GET /api/users/{user_id}/screenshots` | Скриншоты пользователя |
 
+### Admin endpoints (требуют `ADMIN_PASSWORD`)
+
+| Endpoint | Описание |
+|----------|----------|
+| `POST /api/admin/login` | Вход, устанавливает cookie `admin_session` |
+| `POST /api/admin/logout` | Выход |
+| `GET /api/admin/me` | Проверка сессии |
+| `GET /api/admin/participants` | Список участников |
+| `GET /api/admin/records?limit=&offset=&search=&sort_by=&sort_order=` | Список записей с фильтрами |
+| `POST /api/admin/records` | Создать запись (участник выбирается или создаётся) |
+| `PUT /api/admin/records` | Редактировать запись (date, steps, notes) |
+| `DELETE /api/admin/records` | Удалить запись (+ скриншот) |
+| `PUT /api/admin/records/{timestamp}/screenshot` | Загрузить/заменить скриншот записи |
+| `DELETE /api/admin/records/{timestamp}/screenshot` | Удалить скриншот у записи |
+| `GET /api/admin/screenshots/view?url=` | Proxy для просмотра скриншота в админке |
+| `POST /api/admin/backup` | Создать ZIP-бекап в S3 |
+| `GET /api/admin/backups` | Список бекапов |
+| `GET /api/admin/backup/download/{backup_id}` | Скачать бекап |
+
 ---
 
 ## Команды
@@ -271,7 +290,8 @@ git push
 
 10. **CSV-экранирование может быть несовместимо с `csv.DictReader`**
     - `database._escape_csv` обрабатывает `,`, `"`, `\n`.
-    - Если значение содержит `` или другие спецсимволы, могут быть проблемы при парсинге.
+    - Если значение содержит `
+` или другие спецсимволы, могут быть проблемы при парсинге.
     - Пользовательские имена из Telegram могут содержать эмодзи и спецсимволы.
 
 11. **`delete_objects` в `reset_all_data` ограничен 1000 объектами**

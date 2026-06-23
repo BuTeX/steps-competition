@@ -5,13 +5,26 @@
 
 import logging
 import secrets
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response
+from fastapi import (
+    APIRouter,
+    Cookie,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from pydantic import BaseModel, Field
 
 import database as db
-from config import ADMIN_PASSWORD
+import storage
+from config import ADMIN_PASSWORD, YC_BUCKET_NAME, YC_ENDPOINT
 from storage import create_backup, download_backup, list_backups
 
 logger = logging.getLogger(__name__)
@@ -59,6 +72,15 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     success: bool
+
+
+class RecordCreateRequest(BaseModel):
+    user_id: int = Field(..., gt=0)
+    display_name: str = Field(..., min_length=1)
+    username: str = ""
+    date: str = Field(..., min_length=1)
+    steps: int = Field(..., ge=0)
+    notes: str = ""
 
 
 class RecordUpdateRequest(BaseModel):
@@ -115,6 +137,13 @@ async def admin_me(_: None = Depends(require_admin)):
     return {"authenticated": True}
 
 
+# ─── Участники ──────────────────────────────────────────────────────
+@router.get("/participants")
+async def admin_participants(_: None = Depends(require_admin)):
+    """Список участников для выбора при создании записи."""
+    return db.get_all_participants()
+
+
 # ─── Управление записями ────────────────────────────────────────────
 @router.get("/records")
 async def admin_records(
@@ -151,9 +180,34 @@ async def admin_records(
     }
 
 
+@router.post("/records")
+async def admin_create_record(body: RecordCreateRequest, _: None = Depends(require_admin)):
+    """Создание новой записи о шагах из админ-панели."""
+    try:
+        datetime.strptime(body.date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Некорректный формат даты, ожидается YYYY-MM-DD")
+
+    record = db.create_step_record(
+        user_id=body.user_id,
+        display_name=body.display_name,
+        username=body.username,
+        date=body.date,
+        steps=body.steps,
+        notes=body.notes,
+    )
+    return {"success": True, "record": record}
+
+
 @router.put("/records")
 async def admin_update_record(body: RecordUpdateRequest, _: None = Depends(require_admin)):
     """Редактирование записи о шагах."""
+    if body.new_date:
+        try:
+            datetime.strptime(body.new_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некорректный формат даты, ожидается YYYY-MM-DD")
+
     updated = db.update_step_record(
         timestamp=body.timestamp,
         user_id=body.user_id,
@@ -178,6 +232,128 @@ async def admin_delete_record(body: RecordDeleteRequest, _: None = Depends(requi
     if not deleted:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     return {"success": True}
+
+
+@router.put("/records/{timestamp}/screenshot")
+async def admin_upload_screenshot(
+    timestamp: str,
+    user_id: int = Query(..., gt=0),
+    date: str = Query(..., min_length=1),
+    screenshot: UploadFile = File(...),
+    _: None = Depends(require_admin),
+):
+    """Загрузка или замена скриншота для существующей записи."""
+    records = db.get_all_steps()
+    target = None
+    for record in records:
+        if (
+            record.get("Timestamp", "") == timestamp
+            and str(record.get("UserID", "")) == str(user_id)
+            and record.get("Date", "") == date
+        ):
+            target = record
+            break
+
+    if target is None:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+
+    content = await screenshot.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Файл скриншота пустой")
+
+    display_name = target.get("DisplayName", "Unknown")
+    steps = int(target.get("Steps", "0") or "0")
+    content_type = screenshot.content_type or "image/jpeg"
+
+    try:
+        url = storage.upload_screenshot_bytes(
+            user_id=user_id,
+            display_name=display_name,
+            date_str=date,
+            steps=steps,
+            data=content,
+            content_type=content_type,
+        )
+    except Exception as e:
+        logger.exception("Ошибка загрузки скриншота")
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки скриншота: {e}")
+
+    updated = db.update_step_record(
+        timestamp=timestamp,
+        user_id=user_id,
+        old_date=date,
+        screenshot_url=url,
+    )
+    if not updated:
+        # Если запись не найдена после параллельного изменения — удаляем загруженный файл
+        storage.delete_screenshot_by_url(url)
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+
+    return {"success": True, "record": updated}
+
+
+@router.delete("/records/{timestamp}/screenshot")
+async def admin_delete_screenshot(
+    timestamp: str,
+    user_id: int = Query(..., gt=0),
+    date: str = Query(..., min_length=1),
+    _: None = Depends(require_admin),
+):
+    """Удаление скриншота у существующей записи."""
+    records = db.get_all_steps()
+    target = None
+    for record in records:
+        if (
+            record.get("Timestamp", "") == timestamp
+            and str(record.get("UserID", "")) == str(user_id)
+            and record.get("Date", "") == date
+        ):
+            target = record
+            break
+
+    if target is None:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+
+    screenshot_url = target.get("ScreenshotURL", "")
+    if screenshot_url:
+        storage.delete_screenshot_by_url(screenshot_url)
+
+    updated = db.update_step_record(
+        timestamp=timestamp,
+        user_id=user_id,
+        old_date=date,
+        screenshot_url="",
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+
+    return {"success": True, "record": updated}
+
+
+@router.get("/screenshots/view")
+async def admin_view_screenshot(url: str = Query(..., min_length=1), _: None = Depends(require_admin)):
+    """Proxy для просмотра скриншотов внутри админки."""
+    expected_prefix = f"{YC_ENDPOINT}/{YC_BUCKET_NAME}/"
+    if not url.startswith(expected_prefix):
+        raise HTTPException(status_code=400, detail="Некорректный URL скриншота")
+
+    key = storage.get_screenshot_key_from_url(url)
+    if not key:
+        raise HTTPException(status_code=400, detail="Не удалось извлечь ключ скриншота")
+
+    data = storage.download_screenshot_by_url(url)
+    if not data:
+        raise HTTPException(status_code=404, detail="Скриншот не найден")
+
+    content_type = "image/jpeg"
+    if key.lower().endswith(".png"):
+        content_type = "image/png"
+    elif key.lower().endswith((".jpg", ".jpeg")):
+        content_type = "image/jpeg"
+    elif key.lower().endswith(".webp"):
+        content_type = "image/webp"
+
+    return Response(content=data, media_type=content_type)
 
 
 # ─── Бекапы ─────────────────────────────────────────────────────────

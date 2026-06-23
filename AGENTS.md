@@ -189,7 +189,10 @@ ADMIN_PASSWORD=your_secure_password
 
 ### Админ-панель (`/admin`)
 - Вход по паролю из `ADMIN_PASSWORD`.
+- Создание записей о шагах: выбор существующего участника или создание нового по `UserID` + имени.
 - Редактирование и удаление записей о шагах.
+- Просмотр скриншотов в модальном окне (proxy через `GET /api/admin/screenshots/view`).
+- Загрузка, замена и удаление скриншотов у записей.
 - Создание ZIP-бекапов (`data/steps.csv`, `data/participants.csv`, все скриншоты).
 - Скачивание готовых бекапов.
 - Подтверждение удаления через модальное окно.
@@ -218,8 +221,12 @@ ADMIN_PASSWORD=your_secure_password
 | `POST /api/admin/logout` | Выход |
 | `GET /api/admin/me` | Проверка сессии |
 | `GET /api/admin/records?limit=&offset=&search=&sort_by=&sort_order=` | Список записей с фильтрами |
+| `POST /api/admin/records` | Создать запись (участник выбирается или создаётся) |
 | `PUT /api/admin/records` | Редактировать запись (date, steps, notes) |
 | `DELETE /api/admin/records` | Удалить запись (+ скриншот) |
+| `PUT /api/admin/records/{timestamp}/screenshot` | Загрузить/заменить скриншот записи |
+| `DELETE /api/admin/records/{timestamp}/screenshot` | Удалить скриншот у записи |
+| `GET /api/admin/screenshots/view?url=` | Proxy для просмотра скриншота в админке |
 | `POST /api/admin/backup` | Создать ZIP-бекап в S3 |
 | `GET /api/admin/backups` | Список бекапов |
 | `GET /api/admin/backup/download/{backup_id}` | Скачать бекап |

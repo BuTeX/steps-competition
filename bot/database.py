@@ -156,6 +156,7 @@ def update_step_record(
     new_date: str | None = None,
     steps: int | None = None,
     notes: str | None = None,
+    screenshot_url: str | None = None,
 ) -> dict | None:
     """
     Редактирование существующей записи о шагах по ключу Timestamp + UserID + Date.
@@ -184,6 +185,11 @@ def update_step_record(
         target["Steps"] = str(steps)
     if notes is not None:
         target["Notes"] = notes
+    if screenshot_url is not None:
+        old_screenshot = target.get("ScreenshotURL", "")
+        if old_screenshot and old_screenshot != screenshot_url:
+            delete_screenshot_by_url(old_screenshot)
+        target["ScreenshotURL"] = screenshot_url
 
     # Обновляем timestamp операции, чтобы фиксировать изменение
     target["Timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -192,6 +198,33 @@ def update_step_record(
     write_csv(BUCKET_STEPS_FILE, _list_to_csv(records, STEPS_FIELDS))
     logger.info(f"Отредактирована запись: {target.get('DisplayName')} - {target.get('Date')}: {target.get('Steps')} шагов")
     return target
+
+
+def create_step_record(
+    user_id: int,
+    display_name: str,
+    username: str,
+    date: str,
+    steps: int,
+    notes: str = "",
+) -> dict:
+    """
+    Создание или обновление записи о шагах из админ-панели.
+    Создаёт участника, если он не существует.
+    Возвращает созданную/обновлённую запись.
+    """
+    participant = get_or_create_participant(user_id, username or "", display_name)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    record, _ = add_or_update_step_record(
+        timestamp=timestamp,
+        username=participant.get("Username", ""),
+        user_id=user_id,
+        display_name=participant.get("DisplayName", display_name),
+        date=date,
+        steps=steps,
+        notes=notes,
+    )
+    return record
 
 
 def delete_step_record(timestamp: str, user_id: int, date: str) -> bool:

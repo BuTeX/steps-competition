@@ -4,20 +4,33 @@ import { ru } from 'date-fns/locale';
 import {
   ArrowLeft,
   Download,
+  Eye,
   FileArchive,
+  Image,
   Loader2,
   LogOut,
   Package,
   Pencil,
+  Plus,
   Save,
   Search,
   Shield,
   Trash2,
+  Upload,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
@@ -45,9 +58,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAdminAuth, useAdminBackups, useAdminRecords, type AdminRecord } from '@/hooks/useAdmin';
+import {
+  useAdminAuth,
+  useAdminBackups,
+  useAdminParticipants,
+  useAdminRecords,
+  type AdminRecord,
+  type AdminParticipant,
+} from '@/hooks/useAdmin';
 
 const PAGE_SIZE = 25;
 
@@ -64,6 +83,15 @@ function formatDate(iso: string) {
     return format(new Date(iso), 'dd.MM.yyyy HH:mm', { locale: ru });
   } catch {
     return iso;
+  }
+}
+
+function filenameFromUrl(url: string) {
+  try {
+    const decoded = decodeURIComponent(url);
+    return decoded.split('/').pop() || url;
+  } catch {
+    return url;
   }
 }
 
@@ -123,12 +151,305 @@ function LoginForm({ onLogin, loading, error }: {
   );
 }
 
+// ─── Create Record Dialog ───────────────────────────────────────────
+function CreateRecordDialog({
+  open,
+  onClose,
+  onSave,
+  saving,
+  participants,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSave: (payload: {
+    user_id: number;
+    display_name: string;
+    username: string;
+    date: string;
+    steps: number;
+    notes: string;
+  }) => Promise<void>;
+  saving: boolean;
+  participants: AdminParticipant[];
+}) {
+  const [useExisting, setUseExisting] = useState(true);
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [userId, setUserId] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [username, setUsername] = useState('');
+  const [date, setDate] = useState('');
+  const [steps, setSteps] = useState('');
+  const [notes, setNotes] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      setUseExisting(true);
+      setSelectedUserId(participants.length ? participants[0].UserID : '');
+      setUserId('');
+      setDisplayName('');
+      setUsername('');
+      setDate('');
+      setSteps('');
+      setNotes('');
+    }
+  }, [open, participants]);
+
+  const selectedParticipant = useMemo(() => {
+    return participants.find((p) => p.UserID === selectedUserId);
+  }, [participants, selectedUserId]);
+
+  const handleSubmit = async () => {
+    const payload = useExisting && selectedParticipant
+      ? {
+          user_id: Number(selectedParticipant.UserID),
+          display_name: selectedParticipant.DisplayName,
+          username: selectedParticipant.Username,
+          date,
+          steps: steps === '' ? 0 : Number(steps),
+          notes,
+        }
+      : {
+          user_id: userId === '' ? 0 : Number(userId),
+          display_name: displayName,
+          username,
+          date,
+          steps: steps === '' ? 0 : Number(steps),
+          notes,
+        };
+    await onSave(payload);
+  };
+
+  const canSubmit = useExisting
+    ? selectedUserId && date && steps !== ''
+    : userId && displayName && date && steps !== '';
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Добавить запись</DialogTitle>
+          <DialogDescription>
+            Создание записи о шагах участника
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="use-existing">Выбрать участника</Label>
+            <Switch
+              id="use-existing"
+              checked={useExisting}
+              onCheckedChange={setUseExisting}
+            />
+          </div>
+
+          {useExisting ? (
+            <div className="space-y-2">
+              <Label>Участник</Label>
+              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Выберите участника" />
+                </SelectTrigger>
+                <SelectContent>
+                  {participants.map((p) => (
+                    <SelectItem key={p.UserID} value={p.UserID}>
+                      {p.DisplayName || p.Username || `ID ${p.UserID}`}
+                      <span className="text-muted-foreground ml-2 text-xs">ID: {p.UserID}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="create-user-id">User ID</Label>
+                <Input
+                  id="create-user-id"
+                  type="number"
+                  min={1}
+                  value={userId}
+                  onChange={(e) => setUserId(e.target.value)}
+                  placeholder="123456789"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="create-display-name">Имя</Label>
+                <Input
+                  id="create-display-name"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="Иван Иванов"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="create-username">Username (опционально)</Label>
+                <Input
+                  id="create-username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="@username"
+                />
+              </div>
+            </>
+          )}
+
+          <div className="space-y-2">
+            <Label htmlFor="create-date">Дата</Label>
+            <Input
+              id="create-date"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="create-steps">Шаги</Label>
+            <Input
+              id="create-steps"
+              type="number"
+              min={0}
+              value={steps}
+              onChange={(e) => setSteps(e.target.value)}
+              placeholder="10000"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="create-notes">Примечания</Label>
+            <Input
+              id="create-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Необязательно"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            Отмена
+          </Button>
+          <Button onClick={handleSubmit} disabled={saving || !canSubmit}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+            Создать
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Screenshot Viewer Dialog ───────────────────────────────────────
+function ScreenshotViewerDialog({
+  url,
+  open,
+  onClose,
+}: {
+  url: string | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  if (!url) return null;
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Скриншот</DialogTitle>
+          <DialogDescription className="break-all">
+            {filenameFromUrl(url)}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex items-center justify-center bg-slate-100 rounded-md overflow-hidden max-h-[70vh]">
+          <img
+            src={`/api/admin/screenshots/view?url=${encodeURIComponent(url)}`}
+            alt="Скриншот"
+            className="max-w-full max-h-[70vh] object-contain"
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Закрыть
+          </Button>
+          <Button asChild>
+            <a href={url} target="_blank" rel="noopener noreferrer">
+              Открыть оригинал
+            </a>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Replace Screenshot Dialog ──────────────────────────────────────
+function ReplaceScreenshotDialog({
+  record,
+  open,
+  onClose,
+  onUpload,
+  saving,
+}: {
+  record: AdminRecord | null;
+  open: boolean;
+  onClose: () => void;
+  onUpload: (file: File) => Promise<void>;
+  saving: boolean;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    if (open) setFile(null);
+  }, [open]);
+
+  if (!record) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Заменить скриншот</DialogTitle>
+          <DialogDescription>
+            {record.DisplayName || record.Username} • {record.Date}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <Input
+            type="file"
+            accept="image/*"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+          />
+          {file && (
+            <div className="text-sm text-slate-600">
+              Выбран: {file.name} ({formatBytes(file.size)})
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            Отмена
+          </Button>
+          <Button
+            onClick={async () => {
+              if (file) await onUpload(file);
+            }}
+            disabled={saving || !file}
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
+            Заменить
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Edit Dialog ────────────────────────────────────────────────────
 function EditRecordDialog({
   record,
   open,
   onClose,
   onSave,
+  onUploadScreenshot,
+  onDeleteScreenshot,
+  onViewScreenshot,
   saving,
 }: {
   record: AdminRecord | null;
@@ -138,14 +459,57 @@ function EditRecordDialog({
     new_date?: string;
     steps?: number;
     notes?: string;
-  }) => Promise<void>;
+  }) => Promise<{ record: AdminRecord }>;
+  onUploadScreenshot: (record: AdminRecord, file: File) => Promise<{ record: AdminRecord }>;
+  onDeleteScreenshot: (record: AdminRecord) => Promise<{ record: AdminRecord }>;
+  onViewScreenshot: (url: string) => void;
   saving: boolean;
 }) {
   const [date, setDate] = useState('');
   const [steps, setSteps] = useState('');
   const [notes, setNotes] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [localRecord, setLocalRecord] = useState<AdminRecord | null>(null);
 
-  if (!record) return null;
+  useEffect(() => {
+    if (record) {
+      setDate(record.Date);
+      setSteps(record.Steps);
+      setNotes(record.Notes);
+      setFile(null);
+      setLocalRecord(record);
+    }
+  }, [record]);
+
+  if (!record || !localRecord) return null;
+
+  const handleSave = async () => {
+    try {
+      const updated = await onSave({
+        new_date: date,
+        steps: steps === '' ? undefined : Number(steps),
+        notes: notes || undefined,
+      });
+
+      let finalRecord = updated.record;
+
+      if (file) {
+        const uploaded = await onUploadScreenshot(finalRecord, file);
+        finalRecord = uploaded.record;
+      }
+
+      setLocalRecord(finalRecord);
+      setFile(null);
+      onClose();
+    } catch {
+      // Ошибки уже показаны в onSave / onUploadScreenshot
+    }
+  };
+
+  const handleDeleteScreenshot = async () => {
+    const updated = await onDeleteScreenshot(localRecord);
+    setLocalRecord(updated.record);
+  };
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -153,7 +517,7 @@ function EditRecordDialog({
         <DialogHeader>
           <DialogTitle>Редактировать запись</DialogTitle>
           <DialogDescription>
-            {record.DisplayName || record.Username} • {record.Date}
+            {localRecord.DisplayName || localRecord.Username} • {localRecord.Date}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
@@ -185,21 +549,54 @@ function EditRecordDialog({
               placeholder="Необязательно"
             />
           </div>
+
+          <div className="space-y-2">
+            <Label>Скриншот</Label>
+            {localRecord.ScreenshotURL ? (
+              <div className="flex items-center gap-2 p-2 border rounded-md bg-slate-50">
+                <FileArchive className="h-4 w-4 text-slate-500" />
+                <span className="text-sm truncate flex-1">
+                  {filenameFromUrl(localRecord.ScreenshotURL)}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onViewScreenshot(localRecord.ScreenshotURL)}
+                  title="Просмотр"
+                >
+                  <Eye className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleDeleteScreenshot}
+                  disabled={saving}
+                  title="Удалить скриншот"
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : (
+              <div className="text-sm text-slate-400">Скриншот не прикреплён</div>
+            )}
+            <Input
+              type="file"
+              accept="image/*"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
+            {file && (
+              <div className="text-sm text-slate-600">
+                Новый файл: {file.name} ({formatBytes(file.size)})
+              </div>
+            )}
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Отмена
           </Button>
-          <Button
-            onClick={async () => {
-              await onSave({
-                new_date: date,
-                steps: steps === '' ? undefined : Number(steps),
-                notes: notes || undefined,
-              });
-            }}
-            disabled={saving}
-          >
+          <Button onClick={handleSave} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
             Сохранить
           </Button>
@@ -217,7 +614,10 @@ export function AdminPage() {
     loading: recordsLoading,
     error: recordsError,
     fetchRecords,
+    createRecord,
     updateRecord,
+    uploadScreenshot,
+    deleteScreenshot,
     deleteRecord,
   } = useAdminRecords();
   const {
@@ -228,19 +628,25 @@ export function AdminPage() {
     createBackup,
     downloadBackup,
   } = useAdminBackups();
+  const { participants, fetchParticipants } = useAdminParticipants();
 
   const [search, setSearch] = useState('');
   const [offset, setOffset] = useState(0);
   const [editRecord, setEditRecord] = useState<AdminRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminRecord | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [replaceTarget, setReplaceTarget] = useState<AdminRecord | null>(null);
+  const [viewUrl, setViewUrl] = useState<string | null>(null);
+  const [viewOpen, setViewOpen] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (authenticated) {
       fetchRecords({ limit: PAGE_SIZE, offset, search });
+      fetchParticipants();
     }
-  }, [authenticated, offset, search, fetchRecords]);
+  }, [authenticated, offset, search, fetchRecords, fetchParticipants]);
 
   useEffect(() => {
     if (authenticated) {
@@ -257,28 +663,97 @@ export function AdminPage() {
     setOffset(0);
   }, [debouncedSearch]);
 
+  const showMessage = (text: string, isError = false) => {
+    setMessage(isError ? `Ошибка: ${text}` : text);
+    setTimeout(() => setMessage(null), 3000);
+  };
+
+  const handleCreate = async (payload: {
+    user_id: number;
+    display_name: string;
+    username: string;
+    date: string;
+    steps: number;
+    notes: string;
+  }) => {
+    setActionLoading(true);
+    try {
+      await createRecord(payload);
+      showMessage('Запись создана');
+      setCreateOpen(false);
+      fetchRecords({ limit: PAGE_SIZE, offset, search });
+    } catch (err: unknown) {
+      showMessage(err instanceof Error ? err.message : 'Ошибка создания', true);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleSave = async (payload: {
     new_date?: string;
     steps?: number;
     notes?: string;
   }) => {
-    if (!editRecord) return;
+    if (!editRecord) throw new Error('Нет записи для сохранения');
     setActionLoading(true);
     try {
-      await updateRecord({
+      const res = await updateRecord({
         timestamp: editRecord.Timestamp,
         user_id: Number(editRecord.UserID),
         old_date: editRecord.Date,
         ...payload,
       });
-      setMessage('Запись обновлена');
-      setEditRecord(null);
+      showMessage('Запись обновлена');
       fetchRecords({ limit: PAGE_SIZE, offset, search });
+      return res;
     } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : 'Ошибка обновления');
+      showMessage(err instanceof Error ? err.message : 'Ошибка обновления', true);
+      throw err;
     } finally {
       setActionLoading(false);
-      setTimeout(() => setMessage(null), 3000);
+    }
+  };
+
+  const handleUploadScreenshot = async (record: AdminRecord, file: File) => {
+    const res = await uploadScreenshot(
+      record.Timestamp,
+      Number(record.UserID),
+      record.Date,
+      file
+    );
+    showMessage('Скриншот обновлён');
+    fetchRecords({ limit: PAGE_SIZE, offset, search });
+    return res;
+  };
+
+  const handleDeleteScreenshot = async (record: AdminRecord) => {
+    const res = await deleteScreenshot(
+      record.Timestamp,
+      Number(record.UserID),
+      record.Date
+    );
+    showMessage('Скриншот удалён');
+    fetchRecords({ limit: PAGE_SIZE, offset, search });
+    return res;
+  };
+
+  const handleReplaceScreenshot = async (file: File) => {
+    if (!replaceTarget) return;
+    setActionLoading(true);
+    try {
+      await uploadScreenshot(
+        replaceTarget.Timestamp,
+        Number(replaceTarget.UserID),
+        replaceTarget.Date,
+        file
+      );
+      showMessage('Скриншот заменён');
+      setReplaceTarget(null);
+      fetchRecords({ limit: PAGE_SIZE, offset, search });
+    } catch (err: unknown) {
+      showMessage(err instanceof Error ? err.message : 'Ошибка замены скриншота', true);
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -291,14 +766,13 @@ export function AdminPage() {
         user_id: Number(deleteTarget.UserID),
         date: deleteTarget.Date,
       });
-      setMessage('Запись удалена');
+      showMessage('Запись удалена');
       setDeleteTarget(null);
       fetchRecords({ limit: PAGE_SIZE, offset, search });
     } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : 'Ошибка удаления');
+      showMessage(err instanceof Error ? err.message : 'Ошибка удаления', true);
     } finally {
       setActionLoading(false);
-      setTimeout(() => setMessage(null), 3000);
     }
   };
 
@@ -306,13 +780,12 @@ export function AdminPage() {
     setActionLoading(true);
     try {
       await createBackup();
-      setMessage('Бекап создан');
+      showMessage('Бекап создан');
       fetchBackups();
     } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : 'Ошибка создания бекапа');
+      showMessage(err instanceof Error ? err.message : 'Ошибка создания бекапа', true);
     } finally {
       setActionLoading(false);
-      setTimeout(() => setMessage(null), 3000);
     }
   };
 
@@ -387,18 +860,24 @@ export function AdminPage() {
               <CardHeader>
                 <CardTitle>Записи шагов</CardTitle>
                 <CardDescription>
-                  Редактирование и удаление записей участников
+                  Создание, редактирование и удаление записей участников
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <Search className="h-4 w-4 text-slate-400" />
-                  <Input
-                    placeholder="Поиск по имени, дате или шагам..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="max-w-sm"
-                  />
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <Search className="h-4 w-4 text-slate-400" />
+                    <Input
+                      placeholder="Поиск по имени, дате или шагам..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      className="max-w-sm"
+                    />
+                  </div>
+                  <Button onClick={() => setCreateOpen(true)} className="gap-2">
+                    <Plus className="h-4 w-4" />
+                    Добавить запись
+                  </Button>
                 </div>
 
                 {recordsError && (
@@ -445,10 +924,18 @@ export function AdminPage() {
                               <TableCell>{Number(record.Steps).toLocaleString('ru-RU')}</TableCell>
                               <TableCell>
                                 {record.ScreenshotURL ? (
-                                  <Badge variant="outline" className="gap-1">
-                                    <FileArchive className="h-3 w-3" />
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="gap-1"
+                                    onClick={() => {
+                                      setViewUrl(record.ScreenshotURL);
+                                      setViewOpen(true);
+                                    }}
+                                  >
+                                    <Eye className="h-3 w-3" />
                                     Есть
-                                  </Badge>
+                                  </Button>
                                 ) : (
                                   <span className="text-slate-400 text-sm">—</span>
                                 )}
@@ -457,19 +944,29 @@ export function AdminPage() {
                                 {record.Notes || '—'}
                               </TableCell>
                               <TableCell className="text-right">
-                                <div className="flex items-center justify-end gap-2">
+                                <div className="flex items-center justify-end gap-1">
                                   <Button
                                     variant="ghost"
                                     size="icon"
                                     onClick={() => setEditRecord(record)}
+                                    title="Редактировать"
                                   >
                                     <Pencil className="h-4 w-4" />
                                   </Button>
                                   <Button
                                     variant="ghost"
                                     size="icon"
+                                    onClick={() => setReplaceTarget(record)}
+                                    title="Заменить скриншот"
+                                  >
+                                    <Image className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
                                     className="text-red-600 hover:text-red-700 hover:bg-red-50"
                                     onClick={() => setDeleteTarget(record)}
+                                    title="Удалить"
                                   >
                                     <Trash2 className="h-4 w-4" />
                                   </Button>
@@ -587,6 +1084,14 @@ export function AdminPage() {
         </Tabs>
       </main>
 
+      <CreateRecordDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSave={handleCreate}
+        saving={actionLoading}
+        participants={participants}
+      />
+
       {editRecord && (
         <EditRecordDialog
           key={`${editRecord.Timestamp}-${editRecord.UserID}-${editRecord.Date}`}
@@ -594,9 +1099,32 @@ export function AdminPage() {
           open={!!editRecord}
           onClose={() => setEditRecord(null)}
           onSave={handleSave}
+          onUploadScreenshot={handleUploadScreenshot}
+          onDeleteScreenshot={handleDeleteScreenshot}
+          onViewScreenshot={(url) => {
+            setViewUrl(url);
+            setViewOpen(true);
+          }}
           saving={actionLoading}
         />
       )}
+
+      <ReplaceScreenshotDialog
+        record={replaceTarget}
+        open={!!replaceTarget}
+        onClose={() => setReplaceTarget(null)}
+        onUpload={handleReplaceScreenshot}
+        saving={actionLoading}
+      />
+
+      <ScreenshotViewerDialog
+        url={viewUrl}
+        open={viewOpen}
+        onClose={() => {
+          setViewOpen(false);
+          setViewUrl(null);
+        }}
+      />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
         <AlertDialogContent>
