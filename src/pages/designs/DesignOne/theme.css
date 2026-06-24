@@ -1,0 +1,13 @@
+/* Design 1 — GP Classic */
+.design-one {
+  --d1-bg: #ffffff;
+  --d1-surface: #ede8f5;
+  --d1-text: #1b0b3b;
+  --d1-muted: #6b6680;
+  --d1-primary: #7856ff;
+  --d1-primary-text: #ffffff;
+  --d1-accent: #fe5500;
+  --d1-border: rgba(27, 11, 59, 0.12);
+  --d1-shadow: 0 4px 24px rgba(27, 11, 59, 0.08);
+  --d1-radius: 16px;
+}

@@ -26,6 +26,9 @@ Thumbs.db
 # Screenshots (local)
 screenshots/
 
+# Source brandbook assets (copies live in public/brandbook)
+BrandBook/
+
 # Logs
 *.log
 

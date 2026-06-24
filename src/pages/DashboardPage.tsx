@@ -1,4 +1,5 @@
 import { RefreshCw } from 'lucide-react';
+import { Link } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { StatsCards } from '@/components/StatsCards';
 import { Leaderboard } from '@/components/Leaderboard';
@@ -74,6 +75,16 @@ export function DashboardPage({
             <p>
               Автообновление каждые 30 сек • Всего записей: {stats.total_records}
             </p>
+            <div className="mt-3 flex items-center justify-center gap-2">
+              {['v1', 'v2', 'v3', 'v4'].map((v) => (
+                <Link
+                  key={v}
+                  to={`/${v}`}
+                  className="h-2 w-2 rounded-full bg-slate-300 hover:bg-[#7856FF] transition-colors"
+                  title={`Дизайн ${v}`}
+                />
+              ))}
+            </div>
           </footer>
         </>
       )}

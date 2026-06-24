@@ -71,5 +71,6 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: 'Unbounded', system-ui, sans-serif;
   }
 }

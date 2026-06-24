@@ -1,0 +1,13 @@
+/* Design 3 — GP Energy */
+.design-three {
+  --d3-bg: #ede8f5;
+  --d3-surface: #ffffff;
+  --d3-text: #1b0b3b;
+  --d3-muted: #6b6680;
+  --d3-primary: #fe5500;
+  --d3-primary-text: #ffffff;
+  --d3-accent: #ffa51e;
+  --d3-border: rgba(27, 11, 59, 0.1);
+  --d3-shadow: 0 6px 28px rgba(27, 11, 59, 0.1);
+  --d3-radius: 14px;
+}
