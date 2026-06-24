@@ -369,16 +369,30 @@ async def handle_photo(message: Message):
 
     pending_photos[user.id] = str(local_path)
 
-    if steps is None:
+    # Если шаги указаны в подписи — начинаем/перезапускаем выбор даты
+    if steps is not None:
+        pending_date_selections.pop(user.id, None)
+        pending_photos.pop(user.id, None)
+        await ask_date_selection(user, steps, str(local_path), message)
+        return
+
+    # Если пользователь уже ввёл шаги и сейчас выбирает дату — прикрепляем скрин к текущей сессии
+    pending = pending_date_selections.get(user.id)
+    if pending:
+        pending["photo_path"] = str(local_path)
+        pending_photos.pop(user.id, None)
         await send_menu(
             message,
-            "📸 Скриншот получен!\n\n"
-            "Теперь отправь количество шагов сообщением, например <code>8500</code>.",
+            "📸 Скриншот получен! Теперь выбери дату кнопкой выше 👆",
         )
         return
 
-    # Если шаги указаны — спрашиваем дату
-    await ask_date_selection(user, steps, str(local_path), message)
+    # Фото без шагов и без активного выбора даты — ждём число шагов
+    await send_menu(
+        message,
+        "📸 Скриншот получен!\n\n"
+        "Теперь отправь количество шагов сообщением, например <code>8500</code>.",
+    )
 
 
 # ─── Обработка текстовых сообщений ──────────────────────────────────
