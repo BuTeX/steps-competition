@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Eye, Loader2, LogOut, Pencil, Plus, Save, Search, Trash2, Users, X } from 'lucide-react';
+import { ArrowLeft, Eye, Image, Loader2, LogOut, Pencil, Plus, Save, Search, Trash2, Upload, Users, X } from 'lucide-react';
 import { Link } from 'react-router';
 import {
   useAdminAuth,
@@ -21,13 +21,18 @@ interface AdminProps {
 export default function Admin({ basePath = '/v3' }: AdminProps) {
   const dashboardPath = basePath;
   const { authenticated, loading: authLoading, logout } = useAdminAuth();
-  const { data, loading, error, fetchRecords, deleteRecord, updateRecord } = useAdminRecords();
+  const { data, loading, error, fetchRecords, deleteRecord, updateRecord, uploadScreenshot, deleteScreenshot } = useAdminRecords();
   const { participants, fetchParticipants, updateParticipant } = useAdminParticipants();
   const [search, setSearch] = useState('');
   const [offset, setOffset] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminRecord | null>(null);
   const [viewUrl, setViewUrl] = useState<string | null>(null);
+
+  // Screenshot management
+  const [replaceTarget, setReplaceTarget] = useState<AdminRecord | null>(null);
+  const [replaceFile, setReplaceFile] = useState<File | null>(null);
+  const [screenshotLoading, setScreenshotLoading] = useState(false);
 
   // Edit record
   const [editRecord, setEditRecord] = useState<AdminRecord | null>(null);
@@ -112,6 +117,37 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
       showMessage(err instanceof Error ? err.message : 'Ошибка обновления', true);
     } finally {
       setSavingRecord(false);
+    }
+  };
+
+  const handleReplaceScreenshot = async () => {
+    if (!replaceTarget || !replaceFile) return;
+    setScreenshotLoading(true);
+    try {
+      await uploadScreenshot(
+        replaceTarget.Timestamp,
+        Number(replaceTarget.UserID),
+        replaceTarget.Date,
+        replaceFile,
+      );
+      showMessage('Скриншот обновлён');
+      setReplaceTarget(null);
+      setReplaceFile(null);
+      fetchRecords({ limit: PAGE_SIZE, offset, search });
+    } catch (err: unknown) {
+      showMessage(err instanceof Error ? err.message : 'Ошибка замены скриншота', true);
+    } finally {
+      setScreenshotLoading(false);
+    }
+  };
+
+  const handleDeleteScreenshot = async (record: AdminRecord) => {
+    try {
+      await deleteScreenshot(record.Timestamp, Number(record.UserID), record.Date);
+      showMessage('Скриншот удалён');
+      fetchRecords({ limit: PAGE_SIZE, offset, search });
+    } catch (err: unknown) {
+      showMessage(err instanceof Error ? err.message : 'Ошибка удаления скриншота', true);
     }
   };
 
@@ -256,15 +292,37 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
                       <td className="px-6 py-3 text-right font-bold">{Number(record.Steps).toLocaleString('ru-RU')}</td>
                       <td className="px-6 py-3 text-center">
                         {record.ScreenshotURL ? (
-                          <button
-                            onClick={() => setViewUrl(record.ScreenshotURL)}
-                            className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium bg-[#7856FF]/10 text-[#7856FF] hover:bg-[#7856FF]/20"
-                          >
-                            <Eye className="h-3 w-3" />
-                            Есть
-                          </button>
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={() => setViewUrl(record.ScreenshotURL)}
+                              className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium bg-[#7856FF]/10 text-[#7856FF] hover:bg-[#7856FF]/20"
+                            >
+                              <Eye className="h-3 w-3" />
+                              Есть
+                            </button>
+                            <button
+                              onClick={() => setReplaceTarget(record)}
+                              className="p-1.5 rounded-full hover:bg-[var(--d3-surface)] text-[var(--d3-muted)]"
+                              title="Заменить скриншот"
+                            >
+                              <Upload className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteScreenshot(record)}
+                              className="p-1.5 rounded-full hover:bg-red-50 text-red-600"
+                              title="Удалить скриншот"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         ) : (
-                          <span className="text-[var(--d3-muted)]">—</span>
+                          <button
+                            onClick={() => setReplaceTarget(record)}
+                            className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium bg-[var(--d3-surface)] text-[var(--d3-muted)] hover:bg-[#7856FF]/10 hover:text-[#7856FF]"
+                          >
+                            <Image className="h-3 w-3" />
+                            Загрузить
+                          </button>
                         )}
                       </td>
                       <td className="px-6 py-3 text-right">
@@ -441,6 +499,43 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
                   })}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {replaceTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => { setReplaceTarget(null); setReplaceFile(null); }}>
+          <div className="bg-white rounded-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-2">Заменить скриншот</h3>
+            <p className="text-sm text-[var(--d3-muted)] mb-4">
+              {replaceTarget.DisplayName || replaceTarget.Username || 'Unknown'} • {replaceTarget.Date}
+            </p>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => setReplaceFile(e.target.files?.[0] || null)}
+              className="w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-medium file:bg-[#7856FF]/10 file:text-[#7856FF] hover:file:bg-[#7856FF]/20"
+            />
+            {replaceFile && (
+              <p className="text-xs text-[var(--d3-muted)] mt-2">Выбран: {replaceFile.name}</p>
+            )}
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => { setReplaceTarget(null); setReplaceFile(null); }}
+                className="px-4 py-2 rounded-xl border border-[var(--d3-border)] text-sm font-medium hover:bg-[var(--d3-surface)]"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={handleReplaceScreenshot}
+                disabled={!replaceFile || screenshotLoading}
+                className="px-4 py-2 rounded-xl bg-[var(--d3-primary)] text-[var(--d3-primary-text)] text-sm font-medium hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
+              >
+                {screenshotLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+                <Upload className="h-4 w-4" />
+                Заменить
+              </button>
             </div>
           </div>
         </div>
