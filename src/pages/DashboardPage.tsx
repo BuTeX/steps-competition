@@ -51,8 +51,10 @@ export function DashboardPage({
             totalSteps={stats.total_steps}
             totalParticipants={stats.total_participants}
             activeDays={stats.active_days}
-            avgStepsPerDay={stats.avg_steps_per_day}
           />
+
+          {/* Daily matrix with screenshots */}
+          <DailyMatrix matrix={matrix} />
 
           {/* Chart + Recent */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -63,9 +65,6 @@ export function DashboardPage({
               <RecentActivity records={records} />
             </div>
           </div>
-
-          {/* Daily matrix with screenshots */}
-          <DailyMatrix matrix={matrix} />
 
           {/* Leaderboard */}
           <Leaderboard users={users} />

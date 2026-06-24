@@ -5,15 +5,19 @@ interface StatsCardsProps {
   totalSteps: number;
   totalParticipants: number;
   activeDays: number;
-  avgStepsPerDay: number;
 }
 
-export function StatsCards({ totalSteps, totalParticipants, activeDays, avgStepsPerDay }: StatsCardsProps) {
+export function StatsCards({ totalSteps, totalParticipants, activeDays }: StatsCardsProps) {
   const formatNumber = (num: number) => {
     if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
     if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
     return num.toLocaleString();
   };
+
+  const avgPerPerson = totalParticipants > 0 ? totalSteps / totalParticipants : 0;
+  const avgPerPersonPerDay = totalParticipants > 0 && activeDays > 0
+    ? totalSteps / totalParticipants / activeDays
+    : 0;
 
   const stats = [
     {
@@ -24,8 +28,8 @@ export function StatsCards({ totalSteps, totalParticipants, activeDays, avgSteps
       bgColor: 'bg-emerald-50',
     },
     {
-      title: 'Участников',
-      value: totalParticipants.toString(),
+      title: 'Среднее на человека',
+      value: formatNumber(Math.round(avgPerPerson)),
       icon: Users,
       color: 'text-blue-600',
       bgColor: 'bg-blue-50',
@@ -38,8 +42,8 @@ export function StatsCards({ totalSteps, totalParticipants, activeDays, avgSteps
       bgColor: 'bg-amber-50',
     },
     {
-      title: 'Среднее / день',
-      value: formatNumber(avgStepsPerDay),
+      title: 'Среднее на человека в день',
+      value: formatNumber(Math.round(avgPerPersonPerDay)),
       icon: TrendingUp,
       color: 'text-rose-600',
       bgColor: 'bg-rose-50',
