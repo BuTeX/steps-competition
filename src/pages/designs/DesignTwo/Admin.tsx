@@ -75,7 +75,7 @@ export default function Admin() {
             </div>
             <div className="flex items-center gap-2">
               <Link
-                to="/v1"
+                to="/v2"
                 className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium border border-[var(--d2-border)] hover:bg-[var(--d2-surface)] transition-colors"
               >
                 <ArrowLeft className="h-4 w-4" />

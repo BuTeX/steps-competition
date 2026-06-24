@@ -2,11 +2,11 @@ import { Loader2 } from 'lucide-react';
 import { useAdminAuth } from '@/hooks/useAdmin';
 
 interface AdminRouteProps {
-  login: React.ComponentType;
-  admin: React.ComponentType;
+  login: React.ReactNode;
+  admin: React.ReactNode;
 }
 
-export function AdminRoute({ login: Login, admin: Admin }: AdminRouteProps) {
+export function AdminRoute({ login, admin }: AdminRouteProps) {
   const { authenticated, loading } = useAdminAuth();
 
   if (loading) {
@@ -18,8 +18,8 @@ export function AdminRoute({ login: Login, admin: Admin }: AdminRouteProps) {
   }
 
   if (!authenticated) {
-    return <Login />;
+    return <>{login}</>;
   }
 
-  return <Admin />;
+  return <>{admin}</>;
 }

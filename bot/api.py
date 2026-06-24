@@ -239,6 +239,10 @@ if dist_path:
     if (dist_path / "assets").exists():
         app.mount("/assets", StaticFiles(directory=str(dist_path / "assets")), name="assets")
     
+    # Монтируем brandbook-ассеты (логотип, паттерны)
+    if (dist_path / "brandbook").exists():
+        app.mount("/brandbook", StaticFiles(directory=str(dist_path / "brandbook")), name="brandbook")
+    
     @app.get("/{full_path:path}")
     async def serve_dashboard(full_path: str):
         """Раздаём React SPA — index.html для всех маршрутов."""

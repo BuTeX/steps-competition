@@ -33,7 +33,12 @@ function formatDate(dateStr: string) {
   }
 }
 
-export default function Dashboard() {
+interface DashboardProps {
+  basePath?: string;
+}
+
+export default function Dashboard({ basePath = '/v3' }: DashboardProps) {
+  const adminPath = basePath === '/' ? '/admin' : `${basePath}/admin`;
   const { records, users, daily, matrix, stats, loading, error, refetch } = useApiData();
   const [selected, setSelected] = useState<{ user: any; entry: any } | null>(null);
 
@@ -115,7 +120,7 @@ export default function Dashboard() {
                 <span className="hidden sm:inline">Обновить</span>
               </button>
               <Link
-                to="/v1/admin"
+                to={adminPath}
                 className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium bg-[var(--d3-primary)] text-[var(--d3-primary-text)] hover:opacity-90 transition-opacity"
               >
                 <Shield className="h-4 w-4" />
@@ -143,20 +148,20 @@ export default function Dashboard() {
             {/* Stats */}
             <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {[
-                { label: 'Всего шагов', value: formatNumber(stats.total_steps), icon: Footprints, color: 'bg-[#FE5500]/10 text-[#FE5500]' },
-                { label: 'Участников', value: stats.total_participants.toString(), icon: Users, color: 'bg-[#FE5500]/10 text-[#FE5500]' },
-                { label: 'Среднее на человека', value: formatNumber(Math.round(avgPerPerson)), icon: TrendingUp, color: 'bg-[#FFA51E]/10 text-[#FFA51E]' },
-                { label: 'Среднее на человека в день', value: formatNumber(Math.round(avgPerPersonPerDay)), icon: Activity, color: 'bg-[#1B0B3B]/10 text-[#1B0B3B]' },
+                { label: 'Всего шагов', value: formatNumber(stats.total_steps), icon: Footprints },
+                { label: 'Участников', value: stats.total_participants.toString(), icon: Users },
+                { label: 'Среднее на человека', value: formatNumber(Math.round(avgPerPerson)), icon: TrendingUp },
+                { label: 'Среднее в день', value: formatNumber(Math.round(avgPerPersonPerDay)), icon: Activity },
               ].map((s) => (
                 <div
                   key={s.label}
-                  className="rounded-[var(--d3-radius)] bg-[var(--d3-surface)] p-5 shadow-[var(--d3-shadow)] flex items-start justify-between"
+                  className="rounded-[var(--d3-radius)] bg-[var(--d3-surface)] p-5 shadow-[var(--d3-shadow)] flex items-center justify-between gap-3"
                 >
-                  <div>
-                    <p className="text-xs text-[var(--d3-muted)] uppercase tracking-wider mb-1">{s.label}</p>
+                  <div className="min-w-0">
+                    <p className="text-[10px] text-[var(--d3-muted)] uppercase tracking-wider mb-1 leading-tight">{s.label}</p>
                     <p className="text-2xl font-bold">{s.value}</p>
                   </div>
-                  <div className={`p-2.5 rounded-xl ${s.color}`}>
+                  <div className="p-2.5 rounded-xl bg-[#7856FF]/10 text-[#7856FF] flex-shrink-0">
                     <s.icon className="h-5 w-5" />
                   </div>
                 </div>
@@ -167,7 +172,7 @@ export default function Dashboard() {
             <section className="rounded-[var(--d3-radius)] bg-white border border-[var(--d3-border)] shadow-[var(--d3-shadow)] overflow-hidden">
               <div className="px-6 py-5 border-b border-[var(--d3-border)] flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-xl bg-[#FE5500]/10 text-[#FE5500]">
+                  <div className="p-2 rounded-xl bg-[#7856FF]/10 text-[#7856FF]">
                     <Calendar className="h-5 w-5" />
                   </div>
                   <div>
@@ -204,7 +209,7 @@ export default function Dashboard() {
                                     onClick={() => entry.screenshot_url && setSelected({ user, entry })}
                                     className={`w-full px-2 py-1.5 rounded-lg font-semibold transition-colors ${
                                       entry.screenshot_url
-                                        ? 'bg-[#FE5500]/10 text-[#FE5500] hover:bg-[#FE5500]/20'
+                                        ? 'bg-[#7856FF]/10 text-[#7856FF] hover:bg-[#7856FF]/20'
                                         : 'bg-[var(--d3-surface)] text-[var(--d3-text)]'
                                     }`}
                                   >
@@ -228,7 +233,7 @@ export default function Dashboard() {
             <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 rounded-[var(--d3-radius)] bg-white border border-[var(--d3-border)] shadow-[var(--d3-shadow)] overflow-hidden">
                 <div className="px-6 py-5 border-b border-[var(--d3-border)] flex items-center gap-3">
-                  <div className="p-2 rounded-xl bg-[#FFA51E]/10 text-[#FFA51E]">
+                  <div className="p-2 rounded-xl bg-[#7856FF]/10 text-[#7856FF]">
                     <TrendingUp className="h-5 w-5" />
                   </div>
                   <h2 className="text-lg font-bold">Активность по дням</h2>
@@ -241,8 +246,8 @@ export default function Dashboard() {
                       <svg viewBox={`0 0 ${chartData.width} ${chartData.height}`} className="w-full min-w-[600px]">
                         <defs>
                           <linearGradient id="d1Gradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#FE5500" stopOpacity={0.35} />
-                            <stop offset="100%" stopColor="#FE5500" stopOpacity={0.05} />
+                            <stop offset="0%" stopColor="#7856FF" stopOpacity={0.35} />
+                            <stop offset="100%" stopColor="#7856FF" stopOpacity={0.05} />
                           </linearGradient>
                         </defs>
                         {chartData.yTicks.map((t, i) => (
@@ -261,13 +266,13 @@ export default function Dashboard() {
                           </g>
                         ))}
                         <path d={chartData.areaPath} fill="url(#d1Gradient)" />
-                        <path d={chartData.linePath} fill="none" stroke="#FE5500" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+                        <path d={chartData.linePath} fill="none" stroke="#7856FF" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
                         {daily.map((d, i) => {
                           const x = chartData.padding.left + (i / Math.max(daily.length - 1, 1)) * (chartData.width - chartData.padding.left - chartData.padding.right);
                           const y = chartData.padding.top + (chartData.height - chartData.padding.top - chartData.padding.bottom) - (d.total_steps / Math.max(chartData.maxSteps, 1)) * (chartData.height - chartData.padding.top - chartData.padding.bottom);
                           return (
                             <g key={i}>
-                              <circle cx={x} cy={y} r={5} fill="#FE5500" stroke="white" strokeWidth={2} />
+                              <circle cx={x} cy={y} r={5} fill="#7856FF" stroke="white" strokeWidth={2} />
                               <title>{formatDate(d.date)}: {d.total_steps.toLocaleString()} шагов ({d.participants} участников)</title>
                             </g>
                           );
@@ -292,7 +297,7 @@ export default function Dashboard() {
 
               <div className="rounded-[var(--d3-radius)] bg-white border border-[var(--d3-border)] shadow-[var(--d3-shadow)] overflow-hidden">
                 <div className="px-6 py-5 border-b border-[var(--d3-border)] flex items-center gap-3">
-                  <div className="p-2 rounded-xl bg-[#FE5500]/10 text-[#FE5500]">
+                  <div className="p-2 rounded-xl bg-[#7856FF]/10 text-[#7856FF]">
                     <Clock className="h-5 w-5" />
                   </div>
                   <h2 className="text-lg font-bold">Последние записи</h2>
@@ -300,7 +305,7 @@ export default function Dashboard() {
                 <div className="p-4 space-y-2 max-h-[360px] overflow-y-auto">
                   {records.slice(0, 20).map((r, idx) => (
                     <div key={idx} className="flex items-center gap-3 p-3 rounded-xl bg-[var(--d3-surface)]">
-                      <div className="h-10 w-10 rounded-full bg-[#FE5500]/10 flex items-center justify-center text-[#FE5500]">
+                      <div className="h-10 w-10 rounded-full bg-[#7856FF]/10 flex items-center justify-center text-[#7856FF]">
                         <Footprints className="h-4 w-4" />
                       </div>
                       <div className="flex-1 min-w-0">
@@ -320,7 +325,7 @@ export default function Dashboard() {
             {/* Leaderboard */}
             <section className="rounded-[var(--d3-radius)] bg-white border border-[var(--d3-border)] shadow-[var(--d3-shadow)] overflow-hidden">
               <div className="px-6 py-5 border-b border-[var(--d3-border)] flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-[#FFA51E]/10 text-[#FFA51E]">
+                <div className="p-2 rounded-xl bg-[#7856FF]/10 text-[#7856FF]">
                   <Medal className="h-5 w-5" />
                 </div>
                 <h2 className="text-lg font-bold">Рейтинг участников</h2>
@@ -342,7 +347,7 @@ export default function Dashboard() {
                         <td className="px-6 py-3">
                           {i < 3 ? (
                             <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${
-                              i === 0 ? 'bg-[#FFA51E] text-white' : i === 1 ? 'bg-[#FE5500] text-white' : 'bg-[#FE5500] text-white'
+                              i === 0 ? 'bg-[#7856FF] text-white' : i === 1 ? 'bg-[#7856FF] text-white' : 'bg-[#7856FF] text-white'
                             }`}>
                               {i + 1}
                             </span>

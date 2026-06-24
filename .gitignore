@@ -27,7 +27,7 @@ Thumbs.db
 screenshots/
 
 # Source brandbook assets (copies live in public/brandbook)
-BrandBook/
+/BrandBook/
 
 # Logs
 *.log

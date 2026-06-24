@@ -29,7 +29,7 @@ export default function Login({ onLogin }: LoginProps) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <BrandLogo className="h-8" />
           <Link
-            to="/v1"
+            to="/v2"
             className="inline-flex items-center gap-2 text-sm font-medium text-[var(--d2-muted)] hover:text-[var(--d2-text)]"
           >
             <ArrowLeft className="h-4 w-4" />

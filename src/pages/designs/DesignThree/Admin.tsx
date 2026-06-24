@@ -13,7 +13,12 @@ import './theme.css';
 
 const PAGE_SIZE = 25;
 
-export default function Admin() {
+interface AdminProps {
+  basePath?: string;
+}
+
+export default function Admin({ basePath = '/v3' }: AdminProps) {
+  const dashboardPath = basePath;
   const { authenticated, loading: authLoading, logout } = useAdminAuth();
   const { data, loading, error, fetchRecords, deleteRecord } = useAdminRecords();
   const [search, setSearch] = useState('');
@@ -33,7 +38,7 @@ export default function Admin() {
   if (authLoading) {
     return (
       <div className="design-three min-h-screen bg-[var(--d3-bg)] flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-[#FE5500]" />
+        <Loader2 className="h-8 w-8 animate-spin text-[#7856FF]" />
       </div>
     );
   }
@@ -75,7 +80,7 @@ export default function Admin() {
             </div>
             <div className="flex items-center gap-2">
               <Link
-                to="/v1"
+                to={dashboardPath}
                 className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium border border-[var(--d3-border)] hover:bg-[var(--d3-surface)] transition-colors"
               >
                 <ArrowLeft className="h-4 w-4" />
@@ -111,7 +116,7 @@ export default function Admin() {
                   placeholder="Поиск..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="pl-9 pr-4 py-2 rounded-full border border-[var(--d3-border)] bg-[var(--d3-surface)] text-sm outline-none focus:ring-2 focus:ring-[#FE5500]/30"
+                  className="pl-9 pr-4 py-2 rounded-full border border-[var(--d3-border)] bg-[var(--d3-surface)] text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
                 />
               </div>
               <button className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium bg-[var(--d3-primary)] text-[var(--d3-primary-text)] hover:opacity-90 transition-opacity">
@@ -140,7 +145,7 @@ export default function Admin() {
                 {loading && !data ? (
                   <tr>
                     <td colSpan={5} className="text-center py-12">
-                      <Loader2 className="h-6 w-6 animate-spin mx-auto text-[#FE5500]" />
+                      <Loader2 className="h-6 w-6 animate-spin mx-auto text-[#7856FF]" />
                     </td>
                   </tr>
                 ) : data?.records.length === 0 ? (
@@ -160,7 +165,7 @@ export default function Admin() {
                         {record.ScreenshotURL ? (
                           <button
                             onClick={() => setViewUrl(record.ScreenshotURL)}
-                            className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium bg-[#FE5500]/10 text-[#FE5500] hover:bg-[#FE5500]/20"
+                            className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium bg-[#7856FF]/10 text-[#7856FF] hover:bg-[#7856FF]/20"
                           >
                             <Eye className="h-3 w-3" />
                             Есть

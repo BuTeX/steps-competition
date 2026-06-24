@@ -9,9 +9,11 @@ import './theme.css';
 
 interface LoginProps {
   onLogin?: () => void;
+  basePath?: string;
 }
 
-export default function Login({ onLogin }: LoginProps) {
+export default function Login({ onLogin, basePath = '/v3' }: LoginProps) {
+  const dashboardPath = basePath;
   const [password, setPassword] = useState('');
   const { login, loading, error } = useAdminAuth();
 
@@ -29,7 +31,7 @@ export default function Login({ onLogin }: LoginProps) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <BrandLogo className="h-8" />
           <Link
-            to="/v1"
+            to={dashboardPath}
             className="inline-flex items-center gap-2 text-sm font-medium text-[var(--d3-muted)] hover:text-[var(--d3-text)]"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -41,7 +43,7 @@ export default function Login({ onLogin }: LoginProps) {
       <main className="flex-1 flex items-center justify-center p-4">
         <div className="w-full max-w-md rounded-[var(--d3-radius)] bg-white border border-[var(--d3-border)] shadow-[var(--d3-shadow)] p-8">
           <div className="flex items-center gap-3 mb-6">
-            <div className="p-3 rounded-2xl bg-[#FE5500]/10 text-[#FE5500]">
+            <div className="p-3 rounded-2xl bg-[#7856FF]/10 text-[#7856FF]">
               <Shield className="h-6 w-6" />
             </div>
             <div>
@@ -61,7 +63,7 @@ export default function Login({ onLogin }: LoginProps) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoFocus
-                className="w-full rounded-xl border border-[var(--d3-border)] bg-[var(--d3-surface)] px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#FE5500]/30"
+                className="w-full rounded-xl border border-[var(--d3-border)] bg-[var(--d3-surface)] px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
                 placeholder="••••••••"
               />
             </div>
