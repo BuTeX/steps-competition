@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# Event loop бота (main thread) — используется для рассылок из API
+_bot_loop: asyncio.AbstractEventLoop | None = None
+
+
 # ─── Константы кнопок ───────────────────────────────────────────────
 BTN_MY_STATS = "📊 Моя статистика"
 BTN_LEADERBOARD = "🏆 Рейтинг"
@@ -532,6 +536,53 @@ async def on_date_selected(callback: CallbackQuery):
             )
 
 
+# ─── Рассылка сообщений из других потоков ───────────────────────────
+def set_bot_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Сохранить event loop бота для отправки сообщений из API."""
+    global _bot_loop
+    _bot_loop = loop
+
+
+def get_bot_loop() -> asyncio.AbstractEventLoop | None:
+    """Вернуть event loop бота."""
+    return _bot_loop
+
+
+async def send_message_to_user(user_id: int, text: str, parse_mode: str | None = ParseMode.HTML) -> bool:
+    """Отправить сообщение пользователю."""
+    try:
+        await bot.send_message(chat_id=user_id, text=text, parse_mode=parse_mode, disable_web_page_preview=True)
+        return True
+    except Exception as e:
+        logger.warning(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
+        return False
+
+
+async def send_broadcast_message(text: str, parse_mode: str | None = ParseMode.HTML, delay: float = 0.05) -> dict:
+    """Отправить сообщение всем участникам."""
+    participants = db.get_all_participants()
+    sent = 0
+    failed = 0
+
+    for participant in participants:
+        user_id = participant.get("UserID", "")
+        if not user_id:
+            continue
+        try:
+            success = await send_message_to_user(int(user_id), text, parse_mode)
+            if success:
+                sent += 1
+            else:
+                failed += 1
+        except Exception as e:
+            logger.warning(f"Ошибка рассылки для {user_id}: {e}")
+            failed += 1
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    return {"sent": sent, "failed": failed}
+
+
 # ─── Главная функция ────────────────────────────────────────────────
 async def main():
     """Запуск бота."""
@@ -543,6 +594,7 @@ async def main():
         logger.error(f"Ошибка инициализации хранилища: {e}")
         return
 
+    set_bot_loop(asyncio.get_running_loop())
     logger.info("Запуск бота...")
     await dp.start_polling(bot)
 

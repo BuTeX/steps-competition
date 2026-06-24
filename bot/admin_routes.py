@@ -3,6 +3,7 @@
 Позволяют редактировать записи, управлять бекапами и скачивать архивы.
 """
 
+import asyncio
 import logging
 import secrets
 from datetime import datetime
@@ -22,6 +23,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
+import bot as bot_module
 import database as db
 import storage
 from config import ADMIN_PASSWORD, YC_BUCKET_NAME, YC_ENDPOINT
@@ -104,6 +106,15 @@ class BackupInfo(BaseModel):
     url: str
     created_at: str
     size: int
+
+
+class ReminderRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+
+
+class ReminderResponse(BaseModel):
+    sent: int
+    failed: int
 
 
 # ─── Авторизация ────────────────────────────────────────────────────
@@ -354,6 +365,49 @@ async def admin_view_screenshot(url: str = Query(..., min_length=1), _: None = D
         content_type = "image/webp"
 
     return Response(content=data, media_type=content_type)
+
+
+# ─── Рассылка напоминаний ───────────────────────────────────────────
+@router.post("/send-reminder", response_model=ReminderResponse)
+async def admin_send_reminder(body: ReminderRequest, _: None = Depends(require_admin)):
+    """Отправить напоминание всем участникам через бота."""
+    loop = bot_module.get_bot_loop()
+    if loop is None:
+        raise HTTPException(status_code=503, detail="Бот ещё не запущен")
+
+    participants = db.get_all_participants()
+    if not participants:
+        return {"sent": 0, "failed": 0}
+
+    sent = 0
+    failed = 0
+
+    for participant in participants:
+        user_id = participant.get("UserID", "")
+        if not user_id:
+            continue
+
+        coro = bot_module.send_message_to_user(
+            int(user_id),
+            body.message,
+            parse_mode=None,  # plain text — эмодзи работают, не нужно экранировать HTML
+        )
+        try:
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+            success = await asyncio.wrap_future(future)
+            if success:
+                sent += 1
+            else:
+                failed += 1
+        except Exception as e:
+            logger.warning(f"Ошибка отправки напоминания пользователю {user_id}: {e}")
+            failed += 1
+
+        # Небольшая задержка чтобы не получить 429 от Telegram
+        await asyncio.sleep(0.05)
+
+    logger.info(f"Рассылка завершена: отправлено {sent}, ошибок {failed}")
+    return {"sent": sent, "failed": failed}
 
 
 # ─── Бекапы ─────────────────────────────────────────────────────────

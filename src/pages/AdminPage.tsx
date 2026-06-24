@@ -14,6 +14,7 @@ import {
   Plus,
   Save,
   Search,
+  Send,
   Shield,
   Trash2,
   Upload,
@@ -24,6 +25,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -64,6 +66,7 @@ import {
   useAdminBackups,
   useAdminParticipants,
   useAdminRecords,
+  useAdminReminders,
   type AdminRecord,
   type AdminParticipant,
 } from '@/hooks/useAdmin';
@@ -629,9 +632,12 @@ export function AdminPage() {
     downloadBackup,
   } = useAdminBackups();
   const { participants, fetchParticipants } = useAdminParticipants();
+  const { sendReminder, loading: reminderLoading } = useAdminReminders();
 
   const [search, setSearch] = useState('');
   const [offset, setOffset] = useState(0);
+  const [reminderText, setReminderText] = useState('');
+  const [reminderResult, setReminderResult] = useState<{ sent: number; failed: number } | null>(null);
   const [editRecord, setEditRecord] = useState<AdminRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminRecord | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -789,6 +795,21 @@ export function AdminPage() {
     }
   };
 
+  const handleSendReminder = async () => {
+    const text = reminderText.trim();
+    if (!text) {
+      showMessage('Введите текст сообщения', true);
+      return;
+    }
+    try {
+      const result = await sendReminder(text);
+      setReminderResult(result);
+      showMessage(`Отправлено ${result.sent} участникам${result.failed > 0 ? `, ошибок: ${result.failed}` : ''}`);
+    } catch (err: unknown) {
+      showMessage(err instanceof Error ? err.message : 'Ошибка отправки', true);
+    }
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -847,6 +868,10 @@ export function AdminPage() {
             <TabsTrigger value="records" className="gap-2">
               <Pencil className="h-4 w-4" />
               Записи
+            </TabsTrigger>
+            <TabsTrigger value="reminders" className="gap-2">
+              <Send className="h-4 w-4" />
+              Рассылка
             </TabsTrigger>
             <TabsTrigger value="backups" className="gap-2">
               <Package className="h-4 w-4" />
@@ -1005,6 +1030,52 @@ export function AdminPage() {
                     )}
                   </>
                 )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Reminders tab */}
+          <TabsContent value="reminders" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Рассылка напоминаний</CardTitle>
+                <CardDescription>
+                  Отправьте сообщение всем участникам через Telegram-бота. Поддерживаются эмодзи.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="reminder-text">Текст сообщения</Label>
+                  <Textarea
+                    id="reminder-text"
+                    value={reminderText}
+                    onChange={(e) => setReminderText(e.target.value)}
+                    placeholder="Например: 👋 Не забудьте заполнить шаги за сегодня!"
+                    rows={5}
+                    maxLength={4000}
+                  />
+                  <div className="text-xs text-slate-500 text-right">
+                    {reminderText.length} / 4000
+                  </div>
+                </div>
+
+                {reminderResult && (
+                  <div className="p-3 rounded-md bg-emerald-50 text-emerald-700 text-sm border border-emerald-200">
+                    ✅ Отправлено: <strong>{reminderResult.sent}</strong>{' '}
+                    {reminderResult.failed > 0 && (
+                      <span className="text-red-600">| Ошибок: <strong>{reminderResult.failed}</strong></span>
+                    )}
+                  </div>
+                )}
+
+                <Button
+                  onClick={handleSendReminder}
+                  disabled={reminderLoading || !reminderText.trim()}
+                  className="gap-2"
+                >
+                  {reminderLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  Отправить всем участникам
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>

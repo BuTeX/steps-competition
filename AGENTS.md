@@ -227,6 +227,7 @@ ADMIN_PASSWORD=your_secure_password
 | `PUT /api/admin/records/{timestamp}/screenshot` | Загрузить/заменить скриншот записи |
 | `DELETE /api/admin/records/{timestamp}/screenshot` | Удалить скриншот у записи |
 | `GET /api/admin/screenshots/view?url=` | Proxy для просмотра скриншота в админке |
+| `POST /api/admin/send-reminder` | Отправить напоминание всем участникам |
 | `POST /api/admin/backup` | Создать ZIP-бекап в S3 |
 | `GET /api/admin/backups` | Список бекапов |
 | `GET /api/admin/backup/download/{backup_id}` | Скачать бекап |

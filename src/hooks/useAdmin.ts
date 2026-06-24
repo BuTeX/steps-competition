@@ -37,6 +37,11 @@ export interface BackupInfo {
   size: number;
 }
 
+export interface ReminderResult {
+  sent: number;
+  failed: number;
+}
+
 async function apiFetch(input: string, init?: RequestInit) {
   const res = await fetch(`${API_BASE}${input}`, {
     credentials: 'include',
@@ -275,4 +280,29 @@ export function useAdminBackups() {
   }, []);
 
   return { backups, loading, error, fetchBackups, createBackup, downloadBackup };
+}
+
+export function useAdminReminders() {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const sendReminder = useCallback(async (message: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiFetch('/api/admin/send-reminder', {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      });
+      return res as ReminderResult;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Ошибка отправки напоминания';
+      setError(msg);
+      throw new Error(msg);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return { loading, error, sendReminder };
 }
