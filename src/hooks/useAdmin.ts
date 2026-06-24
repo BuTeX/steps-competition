@@ -3,6 +3,63 @@ import { useAdminAuth as useAdminAuthContext } from '@/contexts/AdminAuthContext
 
 const API_BASE = '';
 
+async function apiFetch(input: string, init?: RequestInit, csrfToken?: string | null) {
+  const headers: Record<string, string> = {};
+  if (csrfToken) {
+    headers['X-CSRF-Token'] = csrfToken;
+  }
+  const body = init?.body;
+  if (body && typeof body === 'string') {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const res = await fetch(`${API_BASE}${input}`, {
+    credentials: 'include',
+    ...init,
+    headers: {
+      ...headers,
+      ...init?.headers,
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => 'Ошибка запроса');
+    throw new Error(text);
+  }
+  if (res.status === 204) return null;
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    return res.json();
+  }
+  return res.blob();
+}
+
+async function multipartFetch(
+  input: string,
+  formData: FormData,
+  init?: RequestInit,
+  csrfToken?: string | null
+) {
+  const headers: Record<string, string> = {};
+  if (csrfToken) {
+    headers['X-CSRF-Token'] = csrfToken;
+  }
+
+  const res = await fetch(`${API_BASE}${input}`, {
+    credentials: 'include',
+    ...init,
+    body: formData,
+    headers: {
+      ...headers,
+      ...init?.headers,
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => 'Ошибка запроса');
+    throw new Error(text);
+  }
+  return res.json();
+}
+
 export interface AdminRecord {
   Timestamp: string;
   Username: string;
@@ -43,45 +100,12 @@ export interface ReminderResult {
   failed: number;
 }
 
-async function apiFetch(input: string, init?: RequestInit) {
-  const res = await fetch(`${API_BASE}${input}`, {
-    credentials: 'include',
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => 'Ошибка запроса');
-    throw new Error(text);
-  }
-  if (res.status === 204) return null;
-  const contentType = res.headers.get('content-type') || '';
-  if (contentType.includes('application/json')) {
-    return res.json();
-  }
-  return res.blob();
-}
-
-async function multipartFetch(input: string, formData: FormData, init?: RequestInit) {
-  const res = await fetch(`${API_BASE}${input}`, {
-    credentials: 'include',
-    ...init,
-    body: formData,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => 'Ошибка запроса');
-    throw new Error(text);
-  }
-  return res.json();
-}
-
 export function useAdminAuth() {
   return useAdminAuthContext();
 }
 
 export function useAdminParticipants() {
+  const { csrfToken } = useAdminAuthContext();
   const [participants, setParticipants] = useState<AdminParticipant[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,27 +114,32 @@ export function useAdminParticipants() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch('/api/admin/participants');
+      const res = await apiFetch('/api/admin/participants', undefined, csrfToken);
       setParticipants((res as AdminParticipant[]) || []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Ошибка загрузки участников');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [csrfToken]);
 
   const updateParticipant = useCallback(async (userId: string, displayName: string, username: string = '') => {
-    const res = await apiFetch(`/api/admin/participants/${userId}`, {
-      method: 'PUT',
-      body: JSON.stringify({ display_name: displayName, username }),
-    });
+    const res = await apiFetch(
+      `/api/admin/participants/${userId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ display_name: displayName, username }),
+      },
+      csrfToken
+    );
     return res as { success: boolean };
-  }, []);
+  }, [csrfToken]);
 
   return { participants, loading, error, fetchParticipants, updateParticipant };
 }
 
 export function useAdminRecords() {
+  const { csrfToken } = useAdminAuthContext();
   const [data, setData] = useState<RecordsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -131,14 +160,14 @@ export function useAdminRecords() {
       if (params?.search) query.set('search', params.search);
       if (params?.sortBy) query.set('sort_by', params.sortBy);
       if (params?.sortOrder) query.set('sort_order', params.sortOrder);
-      const res = await apiFetch(`/api/admin/records?${query.toString()}`);
+      const res = await apiFetch(`/api/admin/records?${query.toString()}`, undefined, csrfToken);
       setData(res as RecordsResponse);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Ошибка загрузки записей');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [csrfToken]);
 
   const createRecord = useCallback(async (payload: {
     user_id: number;
@@ -151,9 +180,9 @@ export function useAdminRecords() {
     const res = await apiFetch('/api/admin/records', {
       method: 'POST',
       body: JSON.stringify(payload),
-    });
+    }, csrfToken);
     return res as { success: boolean; record: AdminRecord };
-  }, []);
+  }, [csrfToken]);
 
   const updateRecord = useCallback(async (payload: {
     timestamp: string;
@@ -166,9 +195,9 @@ export function useAdminRecords() {
     const res = await apiFetch('/api/admin/records', {
       method: 'PUT',
       body: JSON.stringify(payload),
-    });
+    }, csrfToken);
     return res as { success: boolean; record: AdminRecord };
-  }, []);
+  }, [csrfToken]);
 
   const uploadScreenshot = useCallback(async (
     timestamp: string,
@@ -181,10 +210,11 @@ export function useAdminRecords() {
     const res = await multipartFetch(
       `/api/admin/records/${encodeURIComponent(timestamp)}/screenshot?user_id=${user_id}&date=${encodeURIComponent(date)}`,
       formData,
-      { method: 'PUT' }
+      { method: 'PUT' },
+      csrfToken
     );
     return res as { success: boolean; record: AdminRecord };
-  }, []);
+  }, [csrfToken]);
 
   const deleteScreenshot = useCallback(async (
     timestamp: string,
@@ -193,10 +223,11 @@ export function useAdminRecords() {
   ) => {
     const res = await apiFetch(
       `/api/admin/records/${encodeURIComponent(timestamp)}/screenshot?user_id=${user_id}&date=${encodeURIComponent(date)}`,
-      { method: 'DELETE' }
+      { method: 'DELETE' },
+      csrfToken
     );
     return res as { success: boolean; record: AdminRecord };
-  }, []);
+  }, [csrfToken]);
 
   const deleteRecord = useCallback(async (payload: {
     timestamp: string;
@@ -206,8 +237,8 @@ export function useAdminRecords() {
     await apiFetch('/api/admin/records', {
       method: 'DELETE',
       body: JSON.stringify(payload),
-    });
-  }, []);
+    }, csrfToken);
+  }, [csrfToken]);
 
   return {
     data,
@@ -223,6 +254,7 @@ export function useAdminRecords() {
 }
 
 export function useAdminBackups() {
+  const { csrfToken } = useAdminAuthContext();
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -231,28 +263,54 @@ export function useAdminBackups() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch('/api/admin/backups');
+      const res = await apiFetch('/api/admin/backups', undefined, csrfToken);
       setBackups(res as BackupInfo[]);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Ошибка загрузки бекапов');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [csrfToken]);
 
   const createBackup = useCallback(async () => {
-    const res = await apiFetch('/api/admin/backup', { method: 'POST' });
+    const res = await apiFetch('/api/admin/backup', { method: 'POST' }, csrfToken);
     return res as BackupInfo;
-  }, []);
+  }, [csrfToken]);
 
   const downloadBackup = useCallback((backupId: string) => {
-    window.location.href = `${API_BASE}/api/admin/backup/download/${backupId}`;
-  }, []);
+    const headers: Record<string, string> = {};
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+    fetch(`${API_BASE}/api/admin/backup/download/${backupId}`, {
+      credentials: 'include',
+      headers,
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Ошибка скачивания бекапа');
+        return res.blob();
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = backupId;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      })
+      .catch((err) => {
+        console.error(err);
+        alert(err instanceof Error ? err.message : 'Ошибка скачивания');
+      });
+  }, [csrfToken]);
 
   return { backups, loading, error, fetchBackups, createBackup, downloadBackup };
 }
 
 export function useAdminReminders() {
+  const { csrfToken } = useAdminAuthContext();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -263,7 +321,7 @@ export function useAdminReminders() {
       const res = await apiFetch('/api/admin/send-reminder', {
         method: 'POST',
         body: JSON.stringify({ message }),
-      });
+      }, csrfToken);
       return res as ReminderResult;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Ошибка отправки напоминания';
@@ -272,7 +330,7 @@ export function useAdminReminders() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [csrfToken]);
 
   return { loading, error, sendReminder };
 }

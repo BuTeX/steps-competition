@@ -8,6 +8,7 @@ import {
   type AdminRecord,
   type AdminParticipant,
 } from '@/hooks/useAdmin';
+import { useDebounce } from '@/hooks/useDebounce';
 import { BrandLogo } from '../shared/BrandLogo';
 import { PatternBg } from '../shared/PatternBg';
 import './theme.css';
@@ -21,9 +22,10 @@ interface AdminProps {
 export default function Admin({ basePath = '/v3' }: AdminProps) {
   const dashboardPath = basePath;
   const { authenticated, loading: authLoading, logout } = useAdminAuth();
-  const { data, loading, error, fetchRecords, deleteRecord, updateRecord, uploadScreenshot, deleteScreenshot } = useAdminRecords();
+  const { data, loading, error, fetchRecords, createRecord, deleteRecord, updateRecord, uploadScreenshot, deleteScreenshot } = useAdminRecords();
   const { participants, fetchParticipants, updateParticipant } = useAdminParticipants();
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
   const [offset, setOffset] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminRecord | null>(null);
@@ -46,20 +48,41 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
   const [editedParticipants, setEditedParticipants] = useState<Record<string, { displayName: string; username: string }>>({});
   const [savingParticipants, setSavingParticipants] = useState<Set<string>>(new Set());
 
+  // Create record
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newRecord, setNewRecord] = useState({
+    user_id: '',
+    display_name: '',
+    username: '',
+    date: '',
+    steps: '',
+    notes: '',
+  });
+  const [creatingRecord, setCreatingRecord] = useState(false);
+
   useEffect(() => {
     if (authenticated) {
-      fetchRecords({ limit: PAGE_SIZE, offset, search });
+      fetchRecords({ limit: PAGE_SIZE, offset, search: debouncedSearch });
       fetchParticipants();
     }
-  }, [authenticated, offset, search, fetchRecords, fetchParticipants]);
+  }, [authenticated, offset, debouncedSearch, fetchRecords, fetchParticipants]);
 
   useEffect(() => {
     setOffset(0);
   }, [search]);
 
+  function toIsoDate(date: string) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
+    if (/^\d{2}\.\d{2}\.\d{4}$/.test(date)) {
+      const [d, m, y] = date.split('.');
+      return `${y}-${m}-${d}`;
+    }
+    return date;
+  }
+
   useEffect(() => {
     if (editRecord) {
-      setEditDate(editRecord.Date);
+      setEditDate(toIsoDate(editRecord.Date));
       setEditSteps(editRecord.Steps);
       setEditNotes(editRecord.Notes || '');
     }
@@ -92,7 +115,7 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
       });
       showMessage('Запись удалена');
       setDeleteTarget(null);
-      fetchRecords({ limit: PAGE_SIZE, offset, search });
+      fetchRecords({ limit: PAGE_SIZE, offset, search: debouncedSearch });
     } catch (err: unknown) {
       showMessage(err instanceof Error ? err.message : 'Ошибка удаления', true);
     }
@@ -112,7 +135,7 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
       });
       showMessage('Запись обновлена');
       setEditRecord(null);
-      fetchRecords({ limit: PAGE_SIZE, offset, search });
+      fetchRecords({ limit: PAGE_SIZE, offset, search: debouncedSearch });
     } catch (err: unknown) {
       showMessage(err instanceof Error ? err.message : 'Ошибка обновления', true);
     } finally {
@@ -133,7 +156,7 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
       showMessage('Скриншот обновлён');
       setReplaceTarget(null);
       setReplaceFile(null);
-      fetchRecords({ limit: PAGE_SIZE, offset, search });
+      fetchRecords({ limit: PAGE_SIZE, offset, search: debouncedSearch });
     } catch (err: unknown) {
       showMessage(err instanceof Error ? err.message : 'Ошибка замены скриншота', true);
     } finally {
@@ -145,7 +168,7 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
     try {
       await deleteScreenshot(record.Timestamp, Number(record.UserID), record.Date);
       showMessage('Скриншот удалён');
-      fetchRecords({ limit: PAGE_SIZE, offset, search });
+      fetchRecords({ limit: PAGE_SIZE, offset, search: debouncedSearch });
     } catch (err: unknown) {
       showMessage(err instanceof Error ? err.message : 'Ошибка удаления скриншота', true);
     }
@@ -161,6 +184,46 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
     }));
   };
 
+  const handleCreateRecord = async () => {
+    const userId = Number(newRecord.user_id);
+    if (!userId || userId <= 0) {
+      showMessage('Укажите корректный User ID', true);
+      return;
+    }
+    if (!newRecord.display_name.trim()) {
+      showMessage('Укажите имя участника', true);
+      return;
+    }
+    if (!newRecord.date) {
+      showMessage('Укажите дату', true);
+      return;
+    }
+    const steps = newRecord.steps === '' ? 0 : Number(newRecord.steps);
+    if (Number.isNaN(steps) || steps < 0) {
+      showMessage('Укажите корректное количество шагов', true);
+      return;
+    }
+    setCreatingRecord(true);
+    try {
+      await createRecord({
+        user_id: userId,
+        display_name: newRecord.display_name.trim(),
+        username: newRecord.username.trim(),
+        date: newRecord.date,
+        steps,
+        notes: newRecord.notes.trim(),
+      });
+      showMessage('Запись создана');
+      setCreateOpen(false);
+      setNewRecord({ user_id: '', display_name: '', username: '', date: '', steps: '', notes: '' });
+      fetchRecords({ limit: PAGE_SIZE, offset, search: debouncedSearch });
+    } catch (err: unknown) {
+      showMessage(err instanceof Error ? err.message : 'Ошибка создания записи', true);
+    } finally {
+      setCreatingRecord(false);
+    }
+  };
+
   const handleSaveParticipant = async (p: AdminParticipant) => {
     const changes = editedParticipants[p.UserID];
     if (!changes) return;
@@ -169,7 +232,7 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
       await updateParticipant(p.UserID, changes.displayName, changes.username);
       showMessage('Участник обновлён');
       await fetchParticipants();
-      await fetchRecords({ limit: PAGE_SIZE, offset, search });
+      await fetchRecords({ limit: PAGE_SIZE, offset, search: debouncedSearch });
       setEditedParticipants((prev) => {
         const next = { ...prev };
         delete next[p.UserID];
@@ -248,7 +311,10 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
                 <Users className="h-4 w-4" />
                 <span className="hidden sm:inline">Участники</span>
               </button>
-              <button className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium bg-[var(--d3-primary)] text-[var(--d3-primary-text)] hover:opacity-90 transition-opacity">
+              <button
+                onClick={() => setCreateOpen(true)}
+                className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium bg-[var(--d3-primary)] text-[var(--d3-primary-text)] hover:opacity-90 transition-opacity"
+              >
                 <Plus className="h-4 w-4" />
                 <span className="hidden sm:inline">Добавить</span>
               </button>
@@ -574,6 +640,94 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
               alt="Скриншот"
               className="w-full rounded-2xl"
             />
+          </div>
+        </div>
+      )}
+
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setCreateOpen(false)}>
+          <div className="bg-white rounded-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold">Добавить запись</h3>
+              <button onClick={() => setCreateOpen(false)} className="p-1 rounded-lg hover:bg-[var(--d3-surface)]">
+                <X className="h-5 w-5 text-[var(--d3-muted)]" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1.5">User ID</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={newRecord.user_id}
+                  onChange={(e) => setNewRecord((r) => ({ ...r, user_id: e.target.value }))}
+                  className="w-full rounded-xl border border-[var(--d3-border)] bg-[var(--d3-surface)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1.5">Имя участника</label>
+                <input
+                  type="text"
+                  value={newRecord.display_name}
+                  onChange={(e) => setNewRecord((r) => ({ ...r, display_name: e.target.value }))}
+                  className="w-full rounded-xl border border-[var(--d3-border)] bg-[var(--d3-surface)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1.5">Username (опционально)</label>
+                <input
+                  type="text"
+                  value={newRecord.username}
+                  onChange={(e) => setNewRecord((r) => ({ ...r, username: e.target.value }))}
+                  className="w-full rounded-xl border border-[var(--d3-border)] bg-[var(--d3-surface)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1.5">Дата</label>
+                <input
+                  type="date"
+                  value={newRecord.date}
+                  onChange={(e) => setNewRecord((r) => ({ ...r, date: e.target.value }))}
+                  className="w-full rounded-xl border border-[var(--d3-border)] bg-[var(--d3-surface)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1.5">Шаги</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={newRecord.steps}
+                  onChange={(e) => setNewRecord((r) => ({ ...r, steps: e.target.value }))}
+                  className="w-full rounded-xl border border-[var(--d3-border)] bg-[var(--d3-surface)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1.5">Примечания</label>
+                <input
+                  type="text"
+                  value={newRecord.notes}
+                  onChange={(e) => setNewRecord((r) => ({ ...r, notes: e.target.value }))}
+                  className="w-full rounded-xl border border-[var(--d3-border)] bg-[var(--d3-surface)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setCreateOpen(false)}
+                className="px-4 py-2 rounded-xl border border-[var(--d3-border)] text-sm font-medium hover:bg-[var(--d3-surface)]"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={handleCreateRecord}
+                disabled={creatingRecord}
+                className="px-4 py-2 rounded-xl bg-[var(--d3-primary)] text-[var(--d3-primary-text)] text-sm font-medium hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
+              >
+                {creatingRecord && <Loader2 className="h-4 w-4 animate-spin" />}
+                <Plus className="h-4 w-4" />
+                Создать
+              </button>
+            </div>
           </div>
         </div>
       )}

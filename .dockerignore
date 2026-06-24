@@ -31,3 +31,16 @@ screenshots/
 
 # Node (node_modules not needed in Docker, we use npm install)
 node_modules/
+
+# Build output and repository
+/dist/
+.git/
+
+# Bot-local secrets and runtime data
+bot/.env
+bot/.env.local
+bot/venv/
+bot/env/
+bot/.venv/
+bot/backups/
+bot/screenshots/

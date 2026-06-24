@@ -6,6 +6,7 @@
 import csv
 import io
 import logging
+import threading
 from datetime import datetime
 
 from storage import (
@@ -19,6 +20,9 @@ from storage import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Блокировка для всех операций чтения/записи CSV
+_csv_lock = threading.RLock()
 
 
 # ─── Helpers ────────────────────────────────────────────────────────
@@ -77,7 +81,8 @@ def add_step_record(
         _escape_csv(verified),
         _escape_csv(notes),
     ])
-    append_to_csv(BUCKET_STEPS_FILE, line)
+    with _csv_lock:
+        append_to_csv(BUCKET_STEPS_FILE, line)
     logger.info(f"Добавлена запись: {display_name} - {date}: {steps} шагов")
     
     return {
@@ -109,40 +114,42 @@ def add_or_update_step_record(
     Одна запись на пользователя на день — при повторной отправке
     обновляются шаги (скриншот сохраняется, если не передан новый).
     """
-    records = get_all_steps()
-    new_record = {
-        "Timestamp": timestamp,
-        "Username": username,
-        "UserID": str(user_id),
-        "DisplayName": display_name,
-        "Date": date,
-        "Steps": str(steps),
-        "ScreenshotURL": screenshot_url,
-        "Verified": verified,
-        "Notes": notes,
-    }
+    with _csv_lock:
+        records = get_all_steps()
+        new_record = {
+            "Timestamp": timestamp,
+            "Username": username,
+            "UserID": str(user_id),
+            "DisplayName": display_name,
+            "Date": date,
+            "Steps": str(steps),
+            "ScreenshotURL": screenshot_url,
+            "Verified": verified,
+            "Notes": notes,
+        }
 
-    updated = False
-    for i, record in enumerate(records):
-        if (
-            str(record.get("UserID", "")) == str(user_id)
-            and record.get("Date", "") == date
-        ):
-            # Сохраняем старый скриншот, если новый не передан
-            old_screenshot = record.get("ScreenshotURL", "")
-            if not screenshot_url:
-                new_record["ScreenshotURL"] = old_screenshot
-            elif old_screenshot and old_screenshot != screenshot_url:
-                # Удаляем старый скриншот, если заменяем на новый
-                delete_screenshot_by_url(old_screenshot)
-            records[i] = new_record
-            updated = True
-            break
+        updated = False
+        for i, record in enumerate(records):
+            if (
+                str(record.get("UserID", "")) == str(user_id)
+                and record.get("Date", "") == date
+            ):
+                # Сохраняем старый скриншот, если новый не передан
+                old_screenshot = record.get("ScreenshotURL", "")
+                if not screenshot_url:
+                    new_record["ScreenshotURL"] = old_screenshot
+                elif old_screenshot and old_screenshot != screenshot_url:
+                    # Удаляем старый скриншот, если заменяем на новый
+                    delete_screenshot_by_url(old_screenshot)
+                records[i] = new_record
+                updated = True
+                break
 
-    if not updated:
-        records.append(new_record)
+        if not updated:
+            records.append(new_record)
 
-    write_csv(BUCKET_STEPS_FILE, _list_to_csv(records, STEPS_FIELDS))
+        write_csv(BUCKET_STEPS_FILE, _list_to_csv(records, STEPS_FIELDS))
+
     action = "Обновлена" if updated else "Добавлена"
     logger.info(f"{action} запись: {display_name} - {date}: {steps} шагов")
 
@@ -162,41 +169,42 @@ def update_step_record(
     Редактирование существующей записи о шагах по ключу Timestamp + UserID + Date.
     Обновляет только переданные поля. Возвращает обновлённую запись или None.
     """
-    records = get_all_steps()
-    target = None
-    target_index = -1
+    with _csv_lock:
+        records = get_all_steps()
+        target = None
+        target_index = -1
 
-    for i, record in enumerate(records):
-        if (
-            record.get("Timestamp", "") == timestamp
-            and str(record.get("UserID", "")) == str(user_id)
-            and record.get("Date", "") == old_date
-        ):
-            target = record
-            target_index = i
-            break
+        for i, record in enumerate(records):
+            if (
+                record.get("Timestamp", "") == timestamp
+                and str(record.get("UserID", "")) == str(user_id)
+                and record.get("Date", "") == old_date
+            ):
+                target = record
+                target_index = i
+                break
 
-    if target is None or target_index < 0:
-        return None
+        if target is None or target_index < 0:
+            return None
 
-    if new_date is not None:
-        target["Date"] = new_date
-    if steps is not None:
-        target["Steps"] = str(steps)
-    if notes is not None:
-        target["Notes"] = notes
-    if screenshot_url is not None:
-        old_screenshot = target.get("ScreenshotURL", "")
-        if old_screenshot and old_screenshot != screenshot_url:
-            delete_screenshot_by_url(old_screenshot)
-        target["ScreenshotURL"] = screenshot_url
+        if new_date is not None:
+            target["Date"] = new_date
+        if steps is not None:
+            target["Steps"] = str(steps)
+        if notes is not None:
+            target["Notes"] = notes
+        if screenshot_url is not None:
+            old_screenshot = target.get("ScreenshotURL", "")
+            if old_screenshot and old_screenshot != screenshot_url:
+                delete_screenshot_by_url(old_screenshot)
+            target["ScreenshotURL"] = screenshot_url
 
-    # Обновляем timestamp операции, чтобы фиксировать изменение
-    target["Timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Обновляем timestamp операции, чтобы фиксировать изменение
+        target["Timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    records[target_index] = target
-    write_csv(BUCKET_STEPS_FILE, _list_to_csv(records, STEPS_FIELDS))
-    logger.info(f"Отредактирована запись: {target.get('DisplayName')} - {target.get('Date')}: {target.get('Steps')} шагов")
+        records[target_index] = target
+        write_csv(BUCKET_STEPS_FILE, _list_to_csv(records, STEPS_FIELDS))
+        logger.info(f"Отредактирована запись: {target.get('DisplayName')} - {target.get('Date')}: {target.get('Steps')} шагов")
     return target
 
 
@@ -232,25 +240,26 @@ def delete_step_record(timestamp: str, user_id: int, date: str) -> bool:
     Удаление записи о шагах по ключу Timestamp + UserID + Date.
     При наличии скриншота удаляет его из S3. Возвращает True если запись найдена и удалена.
     """
-    records = get_all_steps()
-    original_len = len(records)
+    with _csv_lock:
+        records = get_all_steps()
+        original_len = len(records)
 
-    screenshot_url = ""
-    filtered = []
-    for record in records:
-        if (
-            record.get("Timestamp", "") == timestamp
-            and str(record.get("UserID", "")) == str(user_id)
-            and record.get("Date", "") == date
-        ):
-            screenshot_url = record.get("ScreenshotURL", "")
-            continue
-        filtered.append(record)
+        screenshot_url = ""
+        filtered = []
+        for record in records:
+            if (
+                record.get("Timestamp", "") == timestamp
+                and str(record.get("UserID", "")) == str(user_id)
+                and record.get("Date", "") == date
+            ):
+                screenshot_url = record.get("ScreenshotURL", "")
+                continue
+            filtered.append(record)
 
-    if len(filtered) == original_len:
-        return False
+        if len(filtered) == original_len:
+            return False
 
-    write_csv(BUCKET_STEPS_FILE, _list_to_csv(filtered, STEPS_FIELDS))
+        write_csv(BUCKET_STEPS_FILE, _list_to_csv(filtered, STEPS_FIELDS))
 
     if screenshot_url:
         delete_screenshot_by_url(screenshot_url)
@@ -261,8 +270,9 @@ def delete_step_record(timestamp: str, user_id: int, date: str) -> bool:
 
 def get_all_steps() -> list[dict]:
     """Получение всех записей о шагах."""
-    csv_text = read_csv(BUCKET_STEPS_FILE)
-    return _csv_to_list(csv_text)
+    with _csv_lock:
+        csv_text = read_csv(BUCKET_STEPS_FILE)
+        return _csv_to_list(csv_text)
 
 
 def get_user_steps(user_id: int) -> list[dict]:
@@ -277,30 +287,31 @@ PARTICIPANTS_FIELDS = ["UserID", "Username", "DisplayName", "JoinedAt", "Active"
 
 def get_or_create_participant(user_id: int, username: str, display_name: str) -> dict:
     """Получение или создание участника."""
-    participants = get_all_participants()
-    
-    for p in participants:
-        if str(p.get("UserID", "")) == str(user_id):
-            return p
-    
-    # Создаём нового
-    joined_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    new_participant = {
-        "UserID": str(user_id),
-        "Username": username or "",
-        "DisplayName": display_name,
-        "JoinedAt": joined_at,
-        "Active": "Yes",
-    }
-    
-    line = ",".join([
-        _escape_csv(new_participant["UserID"]),
-        _escape_csv(new_participant["Username"]),
-        _escape_csv(new_participant["DisplayName"]),
-        _escape_csv(new_participant["JoinedAt"]),
-        _escape_csv(new_participant["Active"]),
-    ])
-    append_to_csv(BUCKET_PARTICIPANTS_FILE, line)
+    with _csv_lock:
+        participants = get_all_participants()
+        
+        for p in participants:
+            if str(p.get("UserID", "")) == str(user_id):
+                return p
+        
+        # Создаём нового
+        joined_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new_participant = {
+            "UserID": str(user_id),
+            "Username": username or "",
+            "DisplayName": display_name,
+            "JoinedAt": joined_at,
+            "Active": "Yes",
+        }
+        
+        line = ",".join([
+            _escape_csv(new_participant["UserID"]),
+            _escape_csv(new_participant["Username"]),
+            _escape_csv(new_participant["DisplayName"]),
+            _escape_csv(new_participant["JoinedAt"]),
+            _escape_csv(new_participant["Active"]),
+        ])
+        append_to_csv(BUCKET_PARTICIPANTS_FILE, line)
     logger.info(f"Добавлен участник: {display_name} (ID: {user_id})")
     
     return new_participant
@@ -308,39 +319,41 @@ def get_or_create_participant(user_id: int, username: str, display_name: str) ->
 
 def get_all_participants() -> list[dict]:
     """Получение всех участников."""
-    csv_text = read_csv(BUCKET_PARTICIPANTS_FILE)
-    return _csv_to_list(csv_text)
+    with _csv_lock:
+        csv_text = read_csv(BUCKET_PARTICIPANTS_FILE)
+        return _csv_to_list(csv_text)
 
 
 def update_participant(user_id: int, display_name: str, username: str | None = None) -> bool:
     """Обновление имени и username участника. Также обновляет DisplayName во всех записях шагов."""
-    participants = get_all_participants()
-    found = False
-    for p in participants:
-        if str(p.get("UserID", "")) == str(user_id):
-            p["DisplayName"] = display_name
-            if username is not None:
-                p["Username"] = username
-            found = True
-            break
+    with _csv_lock:
+        participants = get_all_participants()
+        found = False
+        for p in participants:
+            if str(p.get("UserID", "")) == str(user_id):
+                p["DisplayName"] = display_name
+                if username is not None:
+                    p["Username"] = username
+                found = True
+                break
 
-    if not found:
-        return False
+        if not found:
+            return False
 
-    write_csv(BUCKET_PARTICIPANTS_FILE, _list_to_csv(participants, PARTICIPANTS_FIELDS))
+        write_csv(BUCKET_PARTICIPANTS_FILE, _list_to_csv(participants, PARTICIPANTS_FIELDS))
 
-    # Обновляем DisplayName в записях шагов
-    steps = get_all_steps()
-    updated_steps = False
-    for s in steps:
-        if str(s.get("UserID", "")) == str(user_id):
-            s["DisplayName"] = display_name
-            if username is not None:
-                s["Username"] = username
-            updated_steps = True
+        # Обновляем DisplayName в записях шагов
+        steps = get_all_steps()
+        updated_steps = False
+        for s in steps:
+            if str(s.get("UserID", "")) == str(user_id):
+                s["DisplayName"] = display_name
+                if username is not None:
+                    s["Username"] = username
+                updated_steps = True
 
-    if updated_steps:
-        write_csv(BUCKET_STEPS_FILE, _list_to_csv(steps, STEPS_FIELDS))
+        if updated_steps:
+            write_csv(BUCKET_STEPS_FILE, _list_to_csv(steps, STEPS_FIELDS))
 
     logger.info(f"Обновлён участник: {display_name} (ID: {user_id})")
     return True

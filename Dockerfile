@@ -5,11 +5,24 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
-COPY . .
+# Копируем только файлы, необходимые для сборки фронтенда
+COPY src/ ./src/
+COPY public/ ./public/
+COPY index.html ./
+COPY vite.config.ts ./
+COPY tsconfig*.json ./
+COPY postcss.config.js ./
+COPY tailwind.config.js ./
+COPY components.json ./
+COPY eslint.config.js ./
+COPY package.json ./
 RUN npm run build
 
 # ─── Production stage: Python + Bot + API + Dashboard ──────────────
 FROM python:3.12-slim
+
+# Создаём непривилегированного пользователя
+RUN groupadd -r appuser && useradd -r -g appuser appuser
 
 WORKDIR /app
 
@@ -27,6 +40,11 @@ COPY bot/ ./bot/
 
 # Копируем собранный дашборд из frontend stage
 COPY --from=frontend /app/dist /app/dist
+
+# Переводим владение файлами на непривилегированного пользователя
+RUN chown -R appuser:appuser /app
+
+USER appuser
 
 # Environment
 ENV PYTHONPATH=/app

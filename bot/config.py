@@ -3,6 +3,7 @@
 """
 
 import os
+from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -41,6 +42,14 @@ else:
 
 # ─── Администратор ──────────────────────────────────────────────────
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
+# ─── Рамки конкурса ─────────────────────────────────────────────────
+CONTEST_START_DATE = date.fromisoformat(
+    os.getenv("CONTEST_START_DATE", f"{date.today().year}-01-01")
+)
+CONTEST_END_DATE = date.fromisoformat(
+    os.getenv("CONTEST_END_DATE", f"{date.today().year}-12-31")
+)
 
 # ─── Общие настройки ────────────────────────────────────────────────
 LOCAL_SCREENSHOTS_DIR = Path("screenshots")

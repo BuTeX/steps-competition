@@ -9,12 +9,21 @@ import {
 
 const API_BASE = '';
 
-async function apiFetch(input: string, init?: RequestInit) {
+async function apiFetch(input: string, init?: RequestInit, csrfToken?: string | null) {
+  const headers: Record<string, string> = {};
+  if (csrfToken) {
+    headers['X-CSRF-Token'] = csrfToken;
+  }
+  const body = init?.body;
+  if (body && typeof body === 'string') {
+    headers['Content-Type'] = 'application/json';
+  }
+
   const res = await fetch(`${API_BASE}${input}`, {
     credentials: 'include',
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      ...headers,
       ...init?.headers,
     },
   });
@@ -34,6 +43,7 @@ interface AdminAuthContextValue {
   authenticated: boolean | null;
   loading: boolean;
   error: string | null;
+  csrfToken: string | null;
   login: (password: string) => Promise<void>;
   logout: () => Promise<void>;
   check: () => Promise<void>;
@@ -45,18 +55,20 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [csrfToken, setCsrfToken] = useState<string | null>(null);
 
   const check = useCallback(async () => {
     setLoading(true);
     try {
-      await apiFetch('/api/admin/me');
+      await apiFetch('/api/admin/me', undefined, csrfToken);
       setAuthenticated(true);
     } catch {
       setAuthenticated(false);
+      setCsrfToken(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [csrfToken]);
 
   useEffect(() => {
     check();
@@ -66,13 +78,17 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      await apiFetch('/api/admin/login', {
+      const res = (await apiFetch('/api/admin/login', {
         method: 'POST',
         body: JSON.stringify({ password }),
-      });
+      })) as { success: boolean; csrf_token?: string };
       setAuthenticated(true);
+      if (res.csrf_token) {
+        setCsrfToken(res.csrf_token);
+      }
     } catch (err: unknown) {
       setAuthenticated(false);
+      setCsrfToken(null);
       setError(err instanceof Error ? err.message : 'Ошибка входа');
       throw err;
     } finally {
@@ -81,12 +97,13 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    await apiFetch('/api/admin/logout', { method: 'POST' });
+    await apiFetch('/api/admin/logout', { method: 'POST' }, csrfToken);
     setAuthenticated(false);
-  }, []);
+    setCsrfToken(null);
+  }, [csrfToken]);
 
   return (
-    <AdminAuthContext.Provider value={{ authenticated, loading, error, login, logout, check }}>
+    <AdminAuthContext.Provider value={{ authenticated, loading, error, csrfToken, login, logout, check }}>
       {children}
     </AdminAuthContext.Provider>
   );

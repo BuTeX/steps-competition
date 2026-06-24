@@ -6,9 +6,10 @@
 import asyncio
 import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
+import jwt
 from fastapi import (
     APIRouter,
     Cookie,
@@ -26,29 +27,64 @@ from pydantic import BaseModel, Field
 import bot as bot_module
 import database as db
 import storage
-from config import ADMIN_PASSWORD, YC_BUCKET_NAME, YC_ENDPOINT
+from config import ADMIN_PASSWORD, RAILWAY_PUBLIC_DOMAIN, YC_BUCKET_NAME, YC_ENDPOINT
 from storage import create_backup, download_backup, list_backups
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
-# In-memory хранилище активных сессий (перезапуск приложения сбрасывает сессии)
-_valid_sessions: set[str] = set()
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_DAYS = 1
+CSRF_COOKIE_NAME = "csrf_token"
+
+MAX_SCREENSHOT_SIZE = 5 * 1024 * 1024  # 5 МБ
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 
-def _create_session() -> str:
-    """Генерация уникального токена сессии."""
-    return secrets.token_urlsafe(32)
+def _validate_image_content(content: bytes, content_type: str) -> bool:
+    """Проверка magic bytes загружаемого изображения."""
+    if len(content) < 12:
+        return False
+    if content_type == "image/jpeg":
+        return content[:3] == b"\xff\xd8\xff"
+    if content_type == "image/png":
+        return content[:8] == b"\x89PNG\r\n\x1a\n"
+    if content_type == "image/webp":
+        return content[:4] == b"RIFF" and content[8:12] == b"WEBP"
+    return False
+
+
+def _create_jwt() -> str:
+    """Создание подписанного JWT для админ-сессии."""
+    if not ADMIN_PASSWORD:
+        raise HTTPException(status_code=503, detail="Админ-панель не настроена")
+    payload = {
+        "sub": "admin",
+        "iat": datetime.utcnow(),
+        "exp": datetime.utcnow() + timedelta(days=JWT_EXPIRE_DAYS),
+    }
+    return jwt.encode(payload, ADMIN_PASSWORD, algorithm=JWT_ALGORITHM)
+
+
+def _verify_jwt(token: str) -> bool:
+    """Проверка подписи и срока действия JWT."""
+    if not ADMIN_PASSWORD or not token:
+        return False
+    try:
+        payload = jwt.decode(token, ADMIN_PASSWORD, algorithms=[JWT_ALGORITHM])
+        return payload.get("sub") == "admin"
+    except jwt.PyJWTError:
+        return False
 
 
 def _set_auth_cookie(response: Response, token: str):
-    """Установка httpOnly cookie с токеном сессии."""
+    """Установка httpOnly cookie с JWT сессии."""
     response.set_cookie(
         key="admin_session",
         value=token,
         httponly=True,
-        secure=False,  # Railway использует HTTPS, но для универсальности оставляем False
-        samesite="lax",
+        secure=bool(RAILWAY_PUBLIC_DOMAIN),
+        samesite="strict",
         max_age=86400,  # 24 часа
         path="/",
     )
@@ -59,12 +95,42 @@ def _clear_auth_cookie(response: Response):
     response.delete_cookie(key="admin_session", path="/")
 
 
-def require_admin(admin_session: Optional[str] = Cookie(None)) -> None:
-    """Dependency для защиты admin-рутов."""
+def _set_csrf_cookie(response: Response, token: str):
+    """Установка CSRF-токена в cookie (доступен JS для Double-Submit)."""
+    response.set_cookie(
+        key=CSRF_COOKIE_NAME,
+        value=token,
+        httponly=False,
+        secure=bool(RAILWAY_PUBLIC_DOMAIN),
+        samesite="strict",
+        max_age=86400,
+        path="/",
+    )
+
+
+def _clear_csrf_cookie(response: Response):
+    """Очистка CSRF cookie."""
+    response.delete_cookie(key=CSRF_COOKIE_NAME, path="/")
+
+
+def require_admin(
+    request: Request,
+    admin_session: Optional[str] = Cookie(None),
+    csrf_token: Optional[str] = Cookie(None),
+) -> None:
+    """Dependency для защиты admin-рутов с JWT + CSRF."""
     if not ADMIN_PASSWORD:
         raise HTTPException(status_code=503, detail="Админ-панель не настроена")
-    if not admin_session or admin_session not in _valid_sessions:
+    if not admin_session or not _verify_jwt(admin_session):
         raise HTTPException(status_code=401, detail="Требуется авторизация")
+
+    # CSRF-защита для мутационных методов
+    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        header_token = request.headers.get("X-CSRF-Token")
+        if not header_token or not csrf_token:
+            raise HTTPException(status_code=403, detail="CSRF token missing")
+        if not secrets.compare_digest(header_token, csrf_token):
+            raise HTTPException(status_code=403, detail="CSRF token invalid")
 
 
 # ─── Pydantic-модели ────────────────────────────────────────────────
@@ -74,6 +140,7 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     success: bool
+    csrf_token: str | None = None
 
 
 class RecordCreateRequest(BaseModel):
@@ -129,11 +196,12 @@ async def admin_login(request: Request, response: Response, body: LoginRequest):
     if not ADMIN_PASSWORD:
         raise HTTPException(status_code=503, detail="Админ-панель не настроена")
     if secrets.compare_digest(body.password, ADMIN_PASSWORD):
-        token = _create_session()
-        _valid_sessions.add(token)
+        token = _create_jwt()
+        csrf_token = secrets.token_urlsafe(32)
         _set_auth_cookie(response, token)
+        _set_csrf_cookie(response, csrf_token)
         logger.info(f"Успешный вход в админ-панель: {request.client.host if request.client else 'unknown'}")
-        return {"success": True}
+        return {"success": True, "csrf_token": csrf_token}
     logger.warning(f"Неудачная попытка входа в админ-панель: {request.client.host if request.client else 'unknown'}")
     raise HTTPException(status_code=401, detail="Неверный пароль")
 
@@ -141,10 +209,9 @@ async def admin_login(request: Request, response: Response, body: LoginRequest):
 @router.post("/logout", response_model=LoginResponse)
 async def admin_logout(response: Response, admin_session: Optional[str] = Cookie(None)):
     """Выход из админ-панели."""
-    if admin_session and admin_session in _valid_sessions:
-        _valid_sessions.discard(admin_session)
     _clear_auth_cookie(response)
-    return {"success": True}
+    _clear_csrf_cookie(response)
+    return {"success": True, "csrf_token": None}
 
 
 @router.get("/me")
@@ -157,7 +224,7 @@ async def admin_me(_: None = Depends(require_admin)):
 @router.get("/participants")
 async def admin_participants(_: None = Depends(require_admin)):
     """Список участников для выбора при создании записи."""
-    return db.get_all_participants()
+    return await asyncio.to_thread(db.get_all_participants)
 
 
 @router.put("/participants/{user_id}")
@@ -167,7 +234,8 @@ async def admin_update_participant(
     _: None = Depends(require_admin),
 ):
     """Переименование участника."""
-    updated = db.update_participant(
+    updated = await asyncio.to_thread(
+        db.update_participant,
         user_id=user_id,
         display_name=body.display_name,
         username=body.username,
@@ -188,7 +256,7 @@ async def admin_records(
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
 ):
     """Список записей о шагах с фильтрацией и сортировкой."""
-    records = db.get_all_steps()
+    records = await asyncio.to_thread(db.get_all_steps)
 
     if search:
         search_lower = search.lower()
@@ -221,7 +289,8 @@ async def admin_create_record(body: RecordCreateRequest, _: None = Depends(requi
     except ValueError:
         raise HTTPException(status_code=400, detail="Некорректный формат даты, ожидается YYYY-MM-DD")
 
-    record = db.create_step_record(
+    record = await asyncio.to_thread(
+        db.create_step_record,
         user_id=body.user_id,
         display_name=body.display_name,
         username=body.username,
@@ -241,7 +310,8 @@ async def admin_update_record(body: RecordUpdateRequest, _: None = Depends(requi
         except ValueError:
             raise HTTPException(status_code=400, detail="Некорректный формат даты, ожидается YYYY-MM-DD")
 
-    updated = db.update_step_record(
+    updated = await asyncio.to_thread(
+        db.update_step_record,
         timestamp=body.timestamp,
         user_id=body.user_id,
         old_date=body.old_date,
@@ -257,7 +327,8 @@ async def admin_update_record(body: RecordUpdateRequest, _: None = Depends(requi
 @router.delete("/records")
 async def admin_delete_record(body: RecordDeleteRequest, _: None = Depends(require_admin)):
     """Удаление записи о шагах."""
-    deleted = db.delete_step_record(
+    deleted = await asyncio.to_thread(
+        db.delete_step_record,
         timestamp=body.timestamp,
         user_id=body.user_id,
         date=body.date,
@@ -276,7 +347,7 @@ async def admin_upload_screenshot(
     _: None = Depends(require_admin),
 ):
     """Загрузка или замена скриншота для существующей записи."""
-    records = db.get_all_steps()
+    records = await asyncio.to_thread(db.get_all_steps)
     target = None
     for record in records:
         if (
@@ -293,13 +364,21 @@ async def admin_upload_screenshot(
     content = await screenshot.read()
     if not content:
         raise HTTPException(status_code=400, detail="Файл скриншота пустой")
+    if len(content) > MAX_SCREENSHOT_SIZE:
+        raise HTTPException(status_code=413, detail=f"Размер файла превышает {MAX_SCREENSHOT_SIZE // 1024 // 1024} МБ")
+
+    content_type = screenshot.content_type or "image/jpeg"
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="Недопустимый формат изображения. Разрешены: JPEG, PNG, WEBP")
+    if not _validate_image_content(content, content_type):
+        raise HTTPException(status_code=400, detail="Содержимое файла не соответствует заявленному формату")
 
     display_name = target.get("DisplayName", "Unknown")
     steps = int(target.get("Steps", "0") or "0")
-    content_type = screenshot.content_type or "image/jpeg"
 
     try:
-        url = storage.upload_screenshot_bytes(
+        url = await asyncio.to_thread(
+            storage.upload_screenshot_bytes,
             user_id=user_id,
             display_name=display_name,
             date_str=date,
@@ -311,7 +390,8 @@ async def admin_upload_screenshot(
         logger.exception("Ошибка загрузки скриншота")
         raise HTTPException(status_code=500, detail=f"Ошибка загрузки скриншота: {e}")
 
-    updated = db.update_step_record(
+    updated = await asyncio.to_thread(
+        db.update_step_record,
         timestamp=timestamp,
         user_id=user_id,
         old_date=date,
@@ -319,7 +399,7 @@ async def admin_upload_screenshot(
     )
     if not updated:
         # Если запись не найдена после параллельного изменения — удаляем загруженный файл
-        storage.delete_screenshot_by_url(url)
+        await asyncio.to_thread(storage.delete_screenshot_by_url, url)
         raise HTTPException(status_code=404, detail="Запись не найдена")
 
     return {"success": True, "record": updated}
@@ -333,7 +413,7 @@ async def admin_delete_screenshot(
     _: None = Depends(require_admin),
 ):
     """Удаление скриншота у существующей записи."""
-    records = db.get_all_steps()
+    records = await asyncio.to_thread(db.get_all_steps)
     target = None
     for record in records:
         if (
@@ -349,9 +429,10 @@ async def admin_delete_screenshot(
 
     screenshot_url = target.get("ScreenshotURL", "")
     if screenshot_url:
-        storage.delete_screenshot_by_url(screenshot_url)
+        await asyncio.to_thread(storage.delete_screenshot_by_url, screenshot_url)
 
-    updated = db.update_step_record(
+    updated = await asyncio.to_thread(
+        db.update_step_record,
         timestamp=timestamp,
         user_id=user_id,
         old_date=date,
@@ -371,10 +452,10 @@ async def admin_view_screenshot(url: str = Query(..., min_length=1), _: None = D
         raise HTTPException(status_code=400, detail="Некорректный URL скриншота")
 
     key = storage.get_screenshot_key_from_url(url)
-    if not key:
-        raise HTTPException(status_code=400, detail="Не удалось извлечь ключ скриншота")
+    if not key or not key.startswith("screenshots/") or ".." in key:
+        raise HTTPException(status_code=400, detail="Некорректный ключ скриншота")
 
-    data = storage.download_screenshot_by_url(url)
+    data = await asyncio.to_thread(storage.download_screenshot_by_url, url)
     if not data:
         raise HTTPException(status_code=404, detail="Скриншот не найден")
 
@@ -397,7 +478,7 @@ async def admin_send_reminder(body: ReminderRequest, _: None = Depends(require_a
     if loop is None:
         raise HTTPException(status_code=503, detail="Бот ещё не запущен")
 
-    participants = db.get_all_participants()
+    participants = await asyncio.to_thread(db.get_all_participants)
     if not participants:
         return {"sent": 0, "failed": 0}
 
@@ -436,13 +517,13 @@ async def admin_send_reminder(body: ReminderRequest, _: None = Depends(require_a
 @router.post("/backup", response_model=BackupInfo)
 async def admin_create_backup(_: None = Depends(require_admin)):
     """Создание ZIP-бекапа всех данных."""
-    return create_backup()
+    return await asyncio.to_thread(create_backup)
 
 
 @router.get("/backups", response_model=list[BackupInfo])
 async def admin_list_backups(_: None = Depends(require_admin)):
     """Список доступных бекапов."""
-    return list_backups()
+    return await asyncio.to_thread(list_backups)
 
 
 @router.get("/backup/download/{backup_id}")
@@ -450,7 +531,7 @@ async def admin_download_backup(backup_id: str, _: None = Depends(require_admin)
     """Скачивание ZIP-бекапа по ID."""
     if not backup_id.endswith(".zip") or "/" in backup_id or "\\" in backup_id:
         raise HTTPException(status_code=400, detail="Некорректный ID бекапа")
-    data = download_backup(backup_id)
+    data = await asyncio.to_thread(download_backup, backup_id)
     if not data:
         raise HTTPException(status_code=404, detail="Бекап не найден")
     return Response(

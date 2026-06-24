@@ -342,6 +342,42 @@ git push
 
 ---
 
+## Выполненные исправления (2026-06-24)
+
+### Безопасность
+- **CORS**: убран wildcard `*`, разрешены только `localhost` и `RAILWAY_PUBLIC_DOMAIN`.
+- **Админ-сессии**: in-memory сессии заменены на подписанные JWT (HS256, секрет `ADMIN_PASSWORD`).
+- **CSRF-защита**: Double-Submit Cookie (`csrf_token` в cookie и заголовке `X-CSRF-Token`) для всех `POST/PUT/DELETE` admin-рутов.
+- **S3-proxy**: `/api/admin/screenshots/view` строго валидирует ключ: только `screenshots/`, без `..`.
+- **Загрузка скриншотов**: ограничение 5 МБ, проверка `Content-Type` и magic bytes (JPEG/PNG/WEBP).
+
+### Стабильность и целостность данных
+- **CSV**: введён `threading.RLock()` на операциях чтения/записи CSV в `database.py`.
+- **Async I/O**: все sync-вызовы `db.*`/`storage.*` из async endpoint'ов и хендлеров бота обёрнуты в `asyncio.to_thread()`.
+- **Graceful shutdown**: `main.py` обрабатывает `SIGTERM`/`SIGINT`, корректно останавливает polling бота и API-сервер (`uvicorn.Server`).
+- **Health check**: `/api/health` теперь проверяет доступность S3 и флаг запуска бота.
+
+### Фронтенд
+- Убран production-плагин `kimi-plugin-inspect-react`.
+- `npm audit fix`: уязвимостей 0.
+- `useApiData`: `AbortController`, остановка автообновления в фоновой вкладке (`document.hidden`), валидация всех ответов.
+- Исправлен баг с подписями оси X в `ActivityChart` и `DesignThree/Dashboard`.
+- `DesignThree/Dashboard`: иконка закрытия модалки заменена на `X`, добавлен `onError` для изображений.
+- `DesignThree/Admin`: добавлена кнопка «Добавить» с модальным окном создания записи, debounce поиска, корректный формат даты для `input type="date"`.
+- Удалён мёртвый код: `src/pages/Home.tsx`, `src/pages/AdminPage.tsx`.
+
+### Бот
+- Валидация шагов: только целые числа, диапазон 1–100 000, дроби отклоняются.
+- Валидация дат: проверка формата и рамок конкурса (`CONTEST_START_DATE` / `CONTEST_END_DATE`).
+- `pending_date_selections`: добавлен TTL 15 минут, сессии устаревают.
+
+### Инфраструктура
+- Dockerfile: создан непривилегированный пользователь `appuser`, точечное копирование файлов.
+- `.dockerignore`: добавлены `dist/`, `.git/`, `bot/.env`, `bot/venv/`, `bot/backups/`, `bot/screenshots/`.
+- `requirements.txt`: добавлен `PyJWT==2.10.1`.
+
+---
+
 ## Правила работы с кодом
 
 1. **Не коммить `.env`** — файл с секретами.

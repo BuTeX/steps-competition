@@ -7,12 +7,12 @@ import {
   Footprints,
   Medal,
   RefreshCw,
-  Search,
   Shield,
+  X,
   TrendingUp,
   Users,
 } from 'lucide-react';
-import { useApiData } from '@/hooks/useApiData';
+import { useApiData, type DailyMatrixEntry, type DailyMatrixUser } from '@/hooks/useApiData';
 import { BrandLogo } from '../shared/BrandLogo';
 import { PatternBg } from '../shared/PatternBg';
 import './theme.css';
@@ -39,7 +39,7 @@ interface DashboardProps {
 export default function Dashboard({ basePath = '/v3' }: DashboardProps) {
   const adminPath = basePath === '/' ? '/admin' : `${basePath}/admin`;
   const { records, users, daily, matrix, stats, loading, error, refetch } = useApiData();
-  const [selected, setSelected] = useState<{ user: any; entry: any } | null>(null);
+  const [selected, setSelected] = useState<{ user: DailyMatrixUser; entry: DailyMatrixEntry } | null>(null);
 
   const avgPerPerson = stats && stats.total_participants > 0
     ? stats.total_steps / stats.total_participants
@@ -77,10 +77,11 @@ export default function Dashboard({ basePath = '/v3' }: DashboardProps) {
 
     const step = Math.ceil(daily.length / 8);
     const xLabels = daily
-      .filter((_, i) => i % step === 0 || i === daily.length - 1)
-      .map((d, i) => ({
+      .map((d, i) => ({ d, i }))
+      .filter(({ i }) => i % step === 0 || i === daily.length - 1)
+      .map(({ d, i }) => ({
         label: formatDate(d.date),
-        x: xScale(Math.min(i * step, daily.length - 1)),
+        x: xScale(i),
       }));
 
     return { width, height, padding, linePath, areaPath, yTicks, xLabels, maxSteps };
@@ -381,12 +382,19 @@ export default function Dashboard({ basePath = '/v3' }: DashboardProps) {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold">{selected.user.name} — {formatDate(selected.entry.date)}</h3>
               <button onClick={() => setSelected(null)} className="p-1 rounded-lg hover:bg-[var(--d3-surface)]">
-                <Search className="h-5 w-5" />
+                <X className="h-5 w-5" />
               </button>
             </div>
             <p className="text-sm text-[var(--d3-muted)] mb-4">{selected.entry.steps.toLocaleString()} шагов</p>
             {selected.entry.screenshot_url && (
-              <img src={selected.entry.screenshot_url} alt="Скриншот" className="w-full rounded-xl" />
+              <img
+                src={selected.entry.screenshot_url}
+                alt="Скриншот"
+                className="w-full rounded-xl"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = 'none';
+                }}
+              />
             )}
           </div>
         </div>

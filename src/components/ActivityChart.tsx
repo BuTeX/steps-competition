@@ -48,13 +48,13 @@ export function ActivityChart({ dailyStats }: ActivityChartProps) {
 
     // X-axis labels
     const step = Math.ceil(dailyStats.length / 8);
-    const xLabels = dailyStats.filter((_, i) => i % step === 0 || i === dailyStats.length - 1).map((d, i) => {
-      const originalIndex = i * step;
-      return {
+    const xLabels = dailyStats
+      .map((d, i) => ({ d, i }))
+      .filter(({ i }) => i % step === 0 || i === dailyStats.length - 1)
+      .map(({ d, i }) => ({
         label: formatDate(d.date),
-        x: xScale(Math.min(originalIndex, dailyStats.length - 1)),
-      };
-    });
+        x: xScale(i),
+      }));
 
     return { 
       width, height, areaPath, linePath, yTicks, xLabels, padding, 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 export interface StepRecord {
   Timestamp: string;
@@ -72,23 +72,39 @@ export function useApiData(): UseApiDataReturn {
   const [stats, setStats] = useState<GlobalStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const fetchAll = useCallback(async () => {
+    // Не обновляем данные в фоновой вкладке
+    if (typeof document !== 'undefined' && document.hidden) {
+      return;
+    }
+
+    // Отменяем предыдущий запрос
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     setError(null);
 
     try {
       const base = getApiUrl();
+      const signal = controller.signal;
 
       const [statsRes, boardRes, dailyRes, recordsRes, matrixRes] = await Promise.all([
-        fetch(`${base}/api/stats`),
-        fetch(`${base}/api/leaderboard`),
-        fetch(`${base}/api/daily`),
-        fetch(`${base}/api/records?limit=100`),
-        fetch(`${base}/api/daily-matrix`),
+        fetch(`${base}/api/stats`, { signal }),
+        fetch(`${base}/api/leaderboard`, { signal }),
+        fetch(`${base}/api/daily`, { signal }),
+        fetch(`${base}/api/records?limit=100`, { signal }),
+        fetch(`${base}/api/daily-matrix`, { signal }),
       ]);
 
-      if (!statsRes.ok) throw new Error(`API ошибка: ${statsRes.status}`);
+      const responses = [statsRes, boardRes, dailyRes, recordsRes, matrixRes];
+      const failed = responses.find((res) => !res.ok);
+      if (failed) throw new Error(`API ошибка: ${failed.status}`);
 
       const [statsData, boardData, dailyData, recordsData, matrixData] = await Promise.all([
         statsRes.json(),
@@ -98,22 +114,40 @@ export function useApiData(): UseApiDataReturn {
         matrixRes.json(),
       ]);
 
-      setStats(statsData);
-      setUsers(boardData);
-      setDaily(dailyData);
-      setRecords(recordsData);
-      setMatrix(matrixData);
+      if (!signal.aborted) {
+        setStats(statsData);
+        setUsers(boardData);
+        setDaily(dailyData);
+        setRecords(recordsData);
+        setMatrix(matrixData);
+      }
     } catch (err: any) {
-      setError(err.message || 'Ошибка подключения к API');
+      if (err.name !== 'AbortError') {
+        setError(err.message || 'Ошибка подключения к API');
+      }
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     fetchAll();
     const interval = setInterval(fetchAll, 30000);
-    return () => clearInterval(interval);
+
+    const handleVisibility = () => {
+      if (!document.hidden) {
+        fetchAll();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      abortRef.current?.abort();
+    };
   }, [fetchAll]);
 
   return {

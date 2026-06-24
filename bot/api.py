@@ -3,6 +3,7 @@ FastAPI-сервер для дашборда.
 Предоставляет REST API + раздаёт статический дашборд (React).
 """
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -15,7 +16,10 @@ from pydantic import BaseModel
 
 import database as db
 import admin_routes
-from storage import list_user_screenshots
+import bot as bot_module
+from botocore.exceptions import ClientError
+from config import API_HOST, API_PORT, YC_BUCKET_NAME
+from storage import get_s3, list_user_screenshots
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +30,17 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS — разрешаем доступ с дашборда
+# CORS — только same-origin production и localhost для разработки
+origins = ["http://localhost:3000", "http://localhost:5173"]
+railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN")
+if railway_domain:
+    origins.append(f"https://{railway_domain}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -105,24 +114,39 @@ class ScreenshotInfo(BaseModel):
 # ─── API Endpoints ──────────────────────────────────────────────────
 @app.get("/api/health", tags=["Health"])
 async def root():
-    """Проверка работоспособности."""
+    """Проверка работоспособности API, S3 и бота."""
+    s3_ok = False
+    try:
+        s3 = get_s3()
+        s3.head_bucket(Bucket=YC_BUCKET_NAME)
+        s3_ok = True
+    except ClientError:
+        s3_ok = False
+    except Exception:
+        s3_ok = False
+
+    bot_started = bot_module.is_bot_started()
+    status = "ok" if s3_ok and bot_started else "degraded"
+
     return {
-        "status": "ok",
+        "status": status,
         "service": "Steps Competition API",
         "version": "1.0.0",
+        "s3_ok": s3_ok,
+        "bot_started": bot_started,
     }
 
 
 @app.get("/api/stats", response_model=GlobalStats, tags=["Statistics"])
 async def get_stats():
     """Глобальная статистика."""
-    return db.get_global_stats()
+    return await asyncio.to_thread(db.get_global_stats)
 
 
 @app.get("/api/leaderboard", response_model=list[UserStat], tags=["Leaderboard"])
 async def get_leaderboard():
     """Рейтинг участников (топ-50)."""
-    board = db.get_leaderboard()
+    board = await asyncio.to_thread(db.get_leaderboard)
     result = []
     for b in board[:50]:
         result.append({
@@ -139,13 +163,13 @@ async def get_leaderboard():
 @app.get("/api/daily", response_model=list[DailyStat], tags=["Statistics"])
 async def get_daily():
     """Статистика по дням."""
-    return db.get_daily_stats()
+    return await asyncio.to_thread(db.get_daily_stats)
 
 
 @app.get("/api/daily-matrix", response_model=list[DailyMatrixUser], tags=["Statistics"])
 async def get_daily_matrix():
     """Матрица шагов по участникам и дням (для дашборда со скриншотами)."""
-    records = db.get_all_steps()
+    records = await asyncio.to_thread(db.get_all_steps)
     users: dict[str, dict] = {}
 
     for record in records:
@@ -184,7 +208,7 @@ async def get_daily_matrix():
 @app.get("/api/records", response_model=list[StepRecord], tags=["Records"])
 async def get_records(limit: int = 100):
     """Последние записи (по умолчанию 100)."""
-    records = db.get_all_steps()
+    records = await asyncio.to_thread(db.get_all_steps)
     records.sort(key=lambda x: x.get("Timestamp", ""), reverse=True)
     return records[:limit]
 
@@ -192,7 +216,7 @@ async def get_records(limit: int = 100):
 @app.get("/api/users/{user_id}", response_model=UserDetail, tags=["Users"])
 async def get_user(user_id: int):
     """Статистика конкретного пользователя."""
-    stats = db.get_user_stats(user_id)
+    stats = await asyncio.to_thread(db.get_user_stats, user_id)
     if not stats:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     return stats
@@ -201,15 +225,15 @@ async def get_user(user_id: int):
 @app.get("/api/users/{user_id}/screenshots", response_model=list[ScreenshotInfo], tags=["Users"])
 async def get_user_screenshots_api(user_id: int):
     """Скриншоты пользователя."""
-    user_stats = db.get_user_stats(user_id)
+    user_stats = await asyncio.to_thread(db.get_user_stats, user_id)
     display_name = user_stats["name"] if user_stats else ""
-    return list_user_screenshots(user_id, display_name)
+    return await asyncio.to_thread(list_user_screenshots, user_id, display_name)
 
 
 @app.get("/api/records/recent", response_model=list[StepRecord], tags=["Records"])
 async def get_recent_records(limit: int = 20):
     """Последние записи для виджета."""
-    records = db.get_all_steps()
+    records = await asyncio.to_thread(db.get_all_steps)
     records.sort(key=lambda x: x.get("Timestamp", ""), reverse=True)
     return records[:limit]
 

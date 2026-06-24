@@ -19,7 +19,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 
 import database as db
-from config import BOT_TOKEN, LOCAL_SCREENSHOTS_DIR, API_BASE_URL
+from config import BOT_TOKEN, CONTEST_END_DATE, CONTEST_START_DATE, LOCAL_SCREENSHOTS_DIR, API_BASE_URL
 from storage import init_storage, upload_screenshot_for_record
 
 load_dotenv()
@@ -38,6 +38,20 @@ dp = Dispatcher()
 # Event loop бота (main thread) — используется для рассылок из API
 _bot_loop: asyncio.AbstractEventLoop | None = None
 
+# Флаг успешного запуска бота (для health check)
+_bot_started = False
+
+
+def is_bot_started() -> bool:
+    """Возвращает True, если бот запущен и получает обновления."""
+    return _bot_started
+
+
+def set_bot_started(value: bool) -> None:
+    """Установить флаг запуска бота."""
+    global _bot_started
+    _bot_started = value
+
 
 # ─── Константы кнопок ───────────────────────────────────────────────
 BTN_MY_STATS = "📊 Моя статистика"
@@ -50,8 +64,11 @@ BTN_REFRESH = "🔄 Обновить"
 # Фото, ожидающие ввода шагов (user_id -> локальный путь к файлу)
 pending_photos: dict[int, str] = {}
 
-# Выбор даты после получения шагов (user_id -> {steps, photo_path, suggested_date})
+# Выбор даты после получения шагов (user_id -> {steps, photo_path, created_at})
 pending_date_selections: dict[int, dict] = {}
+
+# TTL для pending-сессии выбора даты (15 минут)
+PENDING_TTL_SECONDS = 900
 
 
 # ─── Клавиатуры ─────────────────────────────────────────────────────
@@ -123,37 +140,59 @@ async def send_menu(
 
 
 # ─── Парсинг сообщений ──────────────────────────────────────────────
+MIN_STEPS = 1
+MAX_STEPS = 100_000
+
+
 def parse_steps_number(text: str) -> int | None:
-    """Парсит только число шагов из текста."""
-    text = text.strip().replace(" ", "").replace(",", "").replace(".", "")
-    if text.isdigit():
-        return int(text)
-    return None
+    """Парсит только целое число шагов из текста."""
+    text = text.strip().replace(" ", "").replace(",", "")
+    # Отклоняем дробные числа (10.5), но не группировки по разрядам (1.000)
+    if "." in text:
+        parts = text.split(".")
+        # Если после точки не только нули и длина после точки < 3 — скорее всего дробь
+        if len(parts) == 2 and (len(parts[1]) > 0 and parts[1] != "0" * len(parts[1])):
+            return None
+        text = parts[0] + (parts[1] if parts[1] else "")
+    if not text.isdigit():
+        return None
+    value = int(text)
+    if value < MIN_STEPS or value > MAX_STEPS:
+        return None
+    return value
 
 
-def normalize_date(date_str: str) -> str:
-    """Нормализация даты в формат YYYY-MM-DD."""
+def normalize_date(date_str: str) -> str | None:
+    """Нормализация даты в формат YYYY-MM-DD с проверкой рамок конкурса."""
     date_str = date_str.strip()
     now = datetime.now()
+    parsed: datetime | None = None
 
     # DD.MM.YYYY
     if re.match(r"^\d{2}\.\d{2}\.\d{4}$", date_str):
-        return datetime.strptime(date_str, "%d.%m.%Y").strftime("%Y-%m-%d")
+        parsed = datetime.strptime(date_str, "%d.%m.%Y")
 
     # DD.MM (текущий год)
-    if re.match(r"^\d{2}\.\d{2}$", date_str):
+    if parsed is None and re.match(r"^\d{2}\.\d{2}$", date_str):
         dt = datetime.strptime(date_str, "%d.%m")
-        return dt.replace(year=now.year).strftime("%Y-%m-%d")
+        parsed = dt.replace(year=now.year)
 
     # YYYY-MM-DD
-    if re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
-        return date_str
+    if parsed is None and re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+        parsed = datetime.strptime(date_str, "%Y-%m-%d")
 
     # DD-MM-YYYY
-    if re.match(r"^\d{2}-\d{2}-\d{4}$", date_str):
-        return datetime.strptime(date_str, "%d-%m-%Y").strftime("%Y-%m-%d")
+    if parsed is None and re.match(r"^\d{2}-\d{2}-\d{4}$", date_str):
+        parsed = datetime.strptime(date_str, "%d-%m-%Y")
 
-    return date_str
+    if parsed is None:
+        return None
+
+    date_value = parsed.date()
+    if date_value < CONTEST_START_DATE or date_value > CONTEST_END_DATE:
+        return None
+
+    return date_value.strftime("%Y-%m-%d")
 
 
 async def ask_date_selection(
@@ -166,7 +205,7 @@ async def ask_date_selection(
     """Показать inline-клавиатуру выбора даты."""
     logger.info(f"ask_date_selection: user={user.id}, steps={steps}, photo_path={photo_path}, suggested={suggested_date}")
     dates = _last_week_dates()
-    user_steps = db.get_user_steps(user.id)
+    user_steps = await asyncio.to_thread(db.get_user_steps, user.id)
     existing_dates = {str(s.get("Date", "")) for s in user_steps}
 
     builder = InlineKeyboardBuilder()
@@ -186,6 +225,7 @@ async def ask_date_selection(
     pending_date_selections[user.id] = {
         "steps": steps,
         "photo_path": photo_path,
+        "created_at": datetime.now().timestamp(),
     }
 
     photo_hint = "📸 Скриншот получен." if photo_path else ""
@@ -211,7 +251,7 @@ async def cmd_start(message: Message):
     """Обработка /start — регистрация и приветствие."""
     user = message.from_user
     display_name = user.full_name or user.username or "Unknown"
-    db.get_or_create_participant(user.id, user.username, display_name)
+    await asyncio.to_thread(db.get_or_create_participant, user.id, user.username, display_name)
 
     welcome_text = (
         f"👋 Привет, {display_name}!\n\n"
@@ -268,7 +308,7 @@ async def cmd_send_steps(message: Message | CallbackQuery):
 async def cmd_my_stats(message: Message):
     """Показать статистику пользователя."""
     user = message.from_user
-    stats = db.get_user_stats(user.id)
+    stats = await asyncio.to_thread(db.get_user_stats, user.id)
 
     if not stats:
         await send_menu(
@@ -298,7 +338,7 @@ async def cmd_my_stats(message: Message):
 @dp.message(Command("leaderboard"))
 async def cmd_leaderboard(message: Message):
     """Показать рейтинг."""
-    board = db.get_leaderboard()
+    board = await asyncio.to_thread(db.get_leaderboard)
 
     if not board:
         await send_menu(
@@ -439,13 +479,14 @@ async def process_steps(
     display_name = user.full_name or user.username or "Unknown"
     logger.info(f"process_steps: user={user.id}, date={date_str}, steps={steps}, has_photo={bool(photo_path)}")
 
-    db.get_or_create_participant(user.id, user.username, display_name)
+    await asyncio.to_thread(db.get_or_create_participant, user.id, user.username, display_name)
 
     screenshot_url = ""
 
     if photo_path:
         try:
-            screenshot_url = upload_screenshot_for_record(
+            screenshot_url = await asyncio.to_thread(
+                upload_screenshot_for_record,
                 user_id=user.id,
                 display_name=display_name,
                 date_str=date_str,
@@ -463,7 +504,8 @@ async def process_steps(
     username = user.username or ""
 
     try:
-        record, updated = db.add_or_update_step_record(
+        record, updated = await asyncio.to_thread(
+            db.add_or_update_step_record,
             timestamp=timestamp,
             username=username,
             user_id=user.id,
@@ -508,6 +550,14 @@ async def on_date_selected(callback: CallbackQuery):
 
     pending = pending_date_selections.pop(user.id, None)
     if not pending:
+        await callback.answer(
+            "Сессия устарела. Отправь шаги заново.",
+            show_alert=True,
+        )
+        return
+
+    created_at = pending.get("created_at", 0)
+    if datetime.now().timestamp() - created_at > PENDING_TTL_SECONDS:
         await callback.answer(
             "Сессия устарела. Отправь шаги заново.",
             show_alert=True,
@@ -574,7 +624,7 @@ async def send_message_to_user(user_id: int, text: str, parse_mode: str | None =
 
 async def send_broadcast_message(text: str, parse_mode: str | None = ParseMode.HTML, delay: float = 0.05) -> dict:
     """Отправить сообщение всем участникам."""
-    participants = db.get_all_participants()
+    participants = await asyncio.to_thread(db.get_all_participants)
     sent = 0
     failed = 0
 
@@ -609,8 +659,12 @@ async def main():
         return
 
     set_bot_loop(asyncio.get_running_loop())
+    set_bot_started(True)
     logger.info("Запуск бота...")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        set_bot_started(False)
 
 
 if __name__ == "__main__":

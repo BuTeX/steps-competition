@@ -7,6 +7,7 @@ import io
 import logging
 import re
 import urllib.parse
+import uuid
 import zipfile
 from datetime import datetime
 
@@ -193,7 +194,7 @@ def upload_screenshot_for_record(
     """Загрузка скриншота с именем Пользователь-ДД.ММ-количество_шагов.jpg."""
     dt = datetime.strptime(date_str, "%Y-%m-%d")
     dd_mm = dt.strftime("%d.%m")
-    filename = f"{_safe_name(display_name)}-{dd_mm}-{steps}.jpg"
+    filename = f"{_safe_name(display_name)}-{dd_mm}-{steps}-{uuid.uuid4().hex[:8]}.jpg"
     s3_key = get_screenshot_key(user_id, display_name, filename)
     return upload_file(local_path, s3_key, content_type="image/jpeg")
 
@@ -236,13 +237,9 @@ def download_screenshot_by_url(url: str) -> bytes:
 
 def delete_screenshot_by_url(url: str):
     """Удаление скриншота по его URL."""
-    if not url:
+    key = get_screenshot_key_from_url(url)
+    if not key:
         return
-    prefix = f"{YC_ENDPOINT}/{YC_BUCKET_NAME}/"
-    if not url.startswith(prefix):
-        return
-    key = url[len(prefix):]
-    key = urllib.parse.unquote(key)
     delete_file(key)
 
 
