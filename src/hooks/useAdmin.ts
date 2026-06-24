@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useAdminAuth as useAdminAuthContext } from '@/contexts/AdminAuthContext';
 
 const API_BASE = '';
 
@@ -77,46 +78,7 @@ async function multipartFetch(input: string, formData: FormData, init?: RequestI
 }
 
 export function useAdminAuth() {
-  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const check = useCallback(async () => {
-    try {
-      await apiFetch('/api/admin/me');
-      setAuthenticated(true);
-    } catch {
-      setAuthenticated(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    check();
-  }, [check]);
-
-  const login = useCallback(async (password: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      await apiFetch('/api/admin/login', {
-        method: 'POST',
-        body: JSON.stringify({ password }),
-      });
-      setAuthenticated(true);
-    } catch (err: unknown) {
-      setAuthenticated(false);
-      setError(err instanceof Error ? err.message : 'Ошибка входа');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const logout = useCallback(async () => {
-    await apiFetch('/api/admin/logout', { method: 'POST' });
-    setAuthenticated(false);
-  }, []);
-
-  return { authenticated, loading, error, login, logout, check };
+  return useAdminAuthContext();
 }
 
 export function useAdminParticipants() {
