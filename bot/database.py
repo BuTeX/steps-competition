@@ -312,6 +312,40 @@ def get_all_participants() -> list[dict]:
     return _csv_to_list(csv_text)
 
 
+def update_participant(user_id: int, display_name: str, username: str | None = None) -> bool:
+    """Обновление имени и username участника. Также обновляет DisplayName во всех записях шагов."""
+    participants = get_all_participants()
+    found = False
+    for p in participants:
+        if str(p.get("UserID", "")) == str(user_id):
+            p["DisplayName"] = display_name
+            if username is not None:
+                p["Username"] = username
+            found = True
+            break
+
+    if not found:
+        return False
+
+    write_csv(BUCKET_PARTICIPANTS_FILE, _list_to_csv(participants, PARTICIPANTS_FIELDS))
+
+    # Обновляем DisplayName в записях шагов
+    steps = get_all_steps()
+    updated_steps = False
+    for s in steps:
+        if str(s.get("UserID", "")) == str(user_id):
+            s["DisplayName"] = display_name
+            if username is not None:
+                s["Username"] = username
+            updated_steps = True
+
+    if updated_steps:
+        write_csv(BUCKET_STEPS_FILE, _list_to_csv(steps, STEPS_FIELDS))
+
+    logger.info(f"Обновлён участник: {display_name} (ID: {user_id})")
+    return True
+
+
 # ─── Агрегация ──────────────────────────────────────────────────────
 def get_leaderboard() -> list[dict]:
     """Получение рейтинга участников."""

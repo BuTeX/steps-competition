@@ -137,7 +137,15 @@ export function useAdminParticipants() {
     }
   }, []);
 
-  return { participants, loading, error, fetchParticipants };
+  const updateParticipant = useCallback(async (userId: string, displayName: string, username: string = '') => {
+    const res = await apiFetch(`/api/admin/participants/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ display_name: displayName, username }),
+    });
+    return res as { success: boolean };
+  }, []);
+
+  return { participants, loading, error, fetchParticipants, updateParticipant };
 }
 
 export function useAdminRecords() {

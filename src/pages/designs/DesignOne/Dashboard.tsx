@@ -15,7 +15,6 @@ import {
 import { useApiData } from '@/hooks/useApiData';
 import { BrandLogo } from '../shared/BrandLogo';
 import { PatternBg } from '../shared/PatternBg';
-import { DesignNav } from '../shared/DesignNav';
 import './theme.css';
 
 function formatNumber(num: number) {
@@ -387,8 +386,6 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-
-      <DesignNav />
     </div>
   );
 }

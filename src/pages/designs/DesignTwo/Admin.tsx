@@ -8,7 +8,6 @@ import {
 } from '@/hooks/useAdmin';
 import { BrandLogo } from '../shared/BrandLogo';
 import { PatternBg } from '../shared/PatternBg';
-import { DesignNav } from '../shared/DesignNav';
 import './theme.css';
 
 const PAGE_SIZE = 25;
@@ -249,8 +248,6 @@ export default function Admin() {
           </div>
         </div>
       )}
-
-      <DesignNav />
     </div>
   );
 }

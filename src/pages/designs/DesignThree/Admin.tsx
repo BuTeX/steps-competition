@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Eye, Loader2, LogOut, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { ArrowLeft, Eye, Loader2, LogOut, Pencil, Plus, Save, Search, Trash2, Users, X } from 'lucide-react';
 import { Link } from 'react-router';
 import {
   useAdminAuth,
   useAdminRecords,
+  useAdminParticipants,
   type AdminRecord,
+  type AdminParticipant,
 } from '@/hooks/useAdmin';
 import { BrandLogo } from '../shared/BrandLogo';
 import { PatternBg } from '../shared/PatternBg';
-import { DesignNav } from '../shared/DesignNav';
 import './theme.css';
 
 const PAGE_SIZE = 25;
@@ -20,20 +21,44 @@ interface AdminProps {
 export default function Admin({ basePath = '/v3' }: AdminProps) {
   const dashboardPath = basePath;
   const { authenticated, loading: authLoading, logout } = useAdminAuth();
-  const { data, loading, error, fetchRecords, deleteRecord } = useAdminRecords();
+  const { data, loading, error, fetchRecords, deleteRecord, updateRecord } = useAdminRecords();
+  const { participants, fetchParticipants, updateParticipant } = useAdminParticipants();
   const [search, setSearch] = useState('');
   const [offset, setOffset] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminRecord | null>(null);
   const [viewUrl, setViewUrl] = useState<string | null>(null);
 
+  // Edit record
+  const [editRecord, setEditRecord] = useState<AdminRecord | null>(null);
+  const [editDate, setEditDate] = useState('');
+  const [editSteps, setEditSteps] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [savingRecord, setSavingRecord] = useState(false);
+
+  // Rename participants
+  const [participantsOpen, setParticipantsOpen] = useState(false);
+  const [editedParticipants, setEditedParticipants] = useState<Record<string, { displayName: string; username: string }>>({});
+  const [savingParticipants, setSavingParticipants] = useState<Set<string>>(new Set());
+
   useEffect(() => {
-    if (authenticated) fetchRecords({ limit: PAGE_SIZE, offset, search });
-  }, [authenticated, offset, search, fetchRecords]);
+    if (authenticated) {
+      fetchRecords({ limit: PAGE_SIZE, offset, search });
+      fetchParticipants();
+    }
+  }, [authenticated, offset, search, fetchRecords, fetchParticipants]);
 
   useEffect(() => {
     setOffset(0);
   }, [search]);
+
+  useEffect(() => {
+    if (editRecord) {
+      setEditDate(editRecord.Date);
+      setEditSteps(editRecord.Steps);
+      setEditNotes(editRecord.Notes || '');
+    }
+  }, [editRecord]);
 
   if (authLoading) {
     return (
@@ -47,6 +72,11 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
     return null;
   }
 
+  const showMessage = (text: string, isError = false) => {
+    setMessage(isError ? `Ошибка: ${text}` : text);
+    setTimeout(() => setMessage(null), 3000);
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
@@ -55,13 +85,69 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
         user_id: Number(deleteTarget.UserID),
         date: deleteTarget.Date,
       });
-      setMessage('Запись удалена');
+      showMessage('Запись удалена');
       setDeleteTarget(null);
       fetchRecords({ limit: PAGE_SIZE, offset, search });
     } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : 'Ошибка удаления');
+      showMessage(err instanceof Error ? err.message : 'Ошибка удаления', true);
     }
-    setTimeout(() => setMessage(null), 3000);
+  };
+
+  const handleSaveRecord = async () => {
+    if (!editRecord) return;
+    setSavingRecord(true);
+    try {
+      await updateRecord({
+        timestamp: editRecord.Timestamp,
+        user_id: Number(editRecord.UserID),
+        old_date: editRecord.Date,
+        new_date: editDate,
+        steps: editSteps === '' ? undefined : Number(editSteps),
+        notes: editNotes,
+      });
+      showMessage('Запись обновлена');
+      setEditRecord(null);
+      fetchRecords({ limit: PAGE_SIZE, offset, search });
+    } catch (err: unknown) {
+      showMessage(err instanceof Error ? err.message : 'Ошибка обновления', true);
+    } finally {
+      setSavingRecord(false);
+    }
+  };
+
+  const handleParticipantChange = (p: AdminParticipant, field: 'displayName' | 'username', value: string) => {
+    setEditedParticipants((prev) => ({
+      ...prev,
+      [p.UserID]: {
+        displayName: field === 'displayName' ? value : (prev[p.UserID]?.displayName ?? p.DisplayName),
+        username: field === 'username' ? value : (prev[p.UserID]?.username ?? p.Username),
+      },
+    }));
+  };
+
+  const handleSaveParticipant = async (p: AdminParticipant) => {
+    const changes = editedParticipants[p.UserID];
+    if (!changes) return;
+    setSavingParticipants((prev) => new Set(prev).add(p.UserID));
+    try {
+      await updateParticipant(p.UserID, changes.displayName, changes.username);
+      showMessage('Участник обновлён');
+      await fetchParticipants();
+      await fetchRecords({ limit: PAGE_SIZE, offset, search });
+      setEditedParticipants((prev) => {
+        const next = { ...prev };
+        delete next[p.UserID];
+        return next;
+      });
+    } catch (err: unknown) {
+      showMessage(err instanceof Error ? err.message : 'Ошибка обновления', true);
+    } finally {
+      setSavingParticipants((prev) => {
+        const next = new Set(prev);
+        next.delete(p.UserID);
+        return next;
+      });
+    }
   };
 
   return (
@@ -119,6 +205,13 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
                   className="pl-9 pr-4 py-2 rounded-full border border-[var(--d3-border)] bg-[var(--d3-surface)] text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
                 />
               </div>
+              <button
+                onClick={() => setParticipantsOpen(true)}
+                className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium border border-[var(--d3-border)] hover:bg-[var(--d3-surface)] transition-colors"
+              >
+                <Users className="h-4 w-4" />
+                <span className="hidden sm:inline">Участники</span>
+              </button>
               <button className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium bg-[var(--d3-primary)] text-[var(--d3-primary-text)] hover:opacity-90 transition-opacity">
                 <Plus className="h-4 w-4" />
                 <span className="hidden sm:inline">Добавить</span>
@@ -176,7 +269,10 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
                       </td>
                       <td className="px-6 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <button className="p-2 rounded-lg hover:bg-[var(--d3-surface)] text-[var(--d3-muted)]">
+                          <button
+                            onClick={() => setEditRecord(record)}
+                            className="p-2 rounded-lg hover:bg-[var(--d3-surface)] text-[var(--d3-muted)]"
+                          >
                             <Pencil className="h-4 w-4" />
                           </button>
                           <button
@@ -218,6 +314,138 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
         </div>
       </main>
 
+      {/* Edit record modal */}
+      {editRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setEditRecord(null)}>
+          <div className="bg-white rounded-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold">Редактировать запись</h3>
+              <button onClick={() => setEditRecord(null)} className="p-1 rounded-lg hover:bg-[var(--d3-surface)]">
+                <X className="h-5 w-5 text-[var(--d3-muted)]" />
+              </button>
+            </div>
+            <p className="text-sm text-[var(--d3-muted)] mb-4">
+              {editRecord.DisplayName || editRecord.Username || 'Unknown'} • {editRecord.Date}
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1.5">Дата</label>
+                <input
+                  type="date"
+                  value={editDate}
+                  onChange={(e) => setEditDate(e.target.value)}
+                  className="w-full rounded-xl border border-[var(--d3-border)] bg-[var(--d3-surface)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1.5">Шаги</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={editSteps}
+                  onChange={(e) => setEditSteps(e.target.value)}
+                  className="w-full rounded-xl border border-[var(--d3-border)] bg-[var(--d3-surface)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1.5">Примечания</label>
+                <input
+                  type="text"
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  className="w-full rounded-xl border border-[var(--d3-border)] bg-[var(--d3-surface)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setEditRecord(null)}
+                className="px-4 py-2 rounded-xl border border-[var(--d3-border)] text-sm font-medium hover:bg-[var(--d3-surface)]"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={handleSaveRecord}
+                disabled={savingRecord}
+                className="px-4 py-2 rounded-xl bg-[var(--d3-primary)] text-[var(--d3-primary-text)] text-sm font-medium hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
+              >
+                {savingRecord && <Loader2 className="h-4 w-4 animate-spin" />}
+                <Save className="h-4 w-4" />
+                Сохранить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Participants rename modal */}
+      {participantsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setParticipantsOpen(false)}>
+          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-5 border-b border-[var(--d3-border)] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-[#7856FF]/10 text-[#7856FF]">
+                  <Users className="h-5 w-5" />
+                </div>
+                <h3 className="text-lg font-bold">Участники</h3>
+              </div>
+              <button onClick={() => setParticipantsOpen(false)} className="p-1 rounded-lg hover:bg-[var(--d3-surface)]">
+                <X className="h-5 w-5 text-[var(--d3-muted)]" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-[var(--d3-surface)]">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-semibold">ID</th>
+                    <th className="text-left px-4 py-3 font-semibold">Имя</th>
+                    <th className="text-left px-4 py-3 font-semibold">Username</th>
+                    <th className="text-right px-4 py-3 font-semibold"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {participants.map((p) => {
+                    const draft = editedParticipants[p.UserID] || { displayName: p.DisplayName, username: p.Username };
+                    const changed = draft.displayName !== p.DisplayName || draft.username !== p.Username;
+                    return (
+                      <tr key={p.UserID} className="border-b border-[var(--d3-border)]/50 last:border-0">
+                        <td className="px-4 py-3 text-[var(--d3-muted)]">{p.UserID}</td>
+                        <td className="px-4 py-3">
+                          <input
+                            type="text"
+                            value={draft.displayName}
+                            onChange={(e) => handleParticipantChange(p, 'displayName', e.target.value)}
+                            className="w-full rounded-lg border border-[var(--d3-border)] bg-[var(--d3-surface)] px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <input
+                            type="text"
+                            value={draft.username}
+                            onChange={(e) => handleParticipantChange(p, 'username', e.target.value)}
+                            className="w-full rounded-lg border border-[var(--d3-border)] bg-[var(--d3-surface)] px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#7856FF]/30"
+                          />
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            onClick={() => handleSaveParticipant(p)}
+                            disabled={!changed || savingParticipants.has(p.UserID)}
+                            className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium bg-[var(--d3-primary)] text-[var(--d3-primary-text)] hover:opacity-90 disabled:opacity-40"
+                          >
+                            {savingParticipants.has(p.UserID) ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                            Сохранить
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setDeleteTarget(null)}>
           <div className="bg-white rounded-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
@@ -254,8 +482,6 @@ export default function Admin({ basePath = '/v3' }: AdminProps) {
           </div>
         </div>
       )}
-
-      <DesignNav />
     </div>
   );
 }

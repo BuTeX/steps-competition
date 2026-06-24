@@ -4,7 +4,6 @@ import { Link } from 'react-router';
 import { useAdminAuth } from '@/hooks/useAdmin';
 import { BrandLogo } from '../shared/BrandLogo';
 import { PatternBg } from '../shared/PatternBg';
-import { DesignNav } from '../shared/DesignNav';
 import './theme.css';
 
 interface LoginProps {
@@ -85,8 +84,6 @@ export default function Login({ onLogin, basePath = '/v3' }: LoginProps) {
           </form>
         </div>
       </main>
-
-      <DesignNav />
     </div>
   );
 }

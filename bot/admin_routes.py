@@ -100,6 +100,11 @@ class RecordDeleteRequest(BaseModel):
     date: str = Field(..., min_length=1)
 
 
+class ParticipantUpdateRequest(BaseModel):
+    display_name: str = Field(..., min_length=1)
+    username: str = ""
+
+
 class BackupInfo(BaseModel):
     backup_id: str
     key: str
@@ -153,6 +158,23 @@ async def admin_me(_: None = Depends(require_admin)):
 async def admin_participants(_: None = Depends(require_admin)):
     """Список участников для выбора при создании записи."""
     return db.get_all_participants()
+
+
+@router.put("/participants/{user_id}")
+async def admin_update_participant(
+    user_id: int,
+    body: ParticipantUpdateRequest,
+    _: None = Depends(require_admin),
+):
+    """Переименование участника."""
+    updated = db.update_participant(
+        user_id=user_id,
+        display_name=body.display_name,
+        username=body.username,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Участник не найден")
+    return {"success": True}
 
 
 # ─── Управление записями ────────────────────────────────────────────
