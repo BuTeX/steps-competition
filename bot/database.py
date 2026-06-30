@@ -361,39 +361,49 @@ def update_participant(user_id: int, display_name: str, username: str | None = N
 
 # ─── Агрегация ──────────────────────────────────────────────────────
 def get_leaderboard() -> list[dict]:
-    """Получение рейтинга участников."""
+    """Получение рейтинга участников (группировка по UserID, имя — из последней записи)."""
     steps = get_all_steps()
     stats = {}
     
     for record in steps:
-        user_id = record.get("UserID", "")
+        user_id = str(record.get("UserID", ""))
+        if not user_id:
+            continue
+        
         display_name = record.get("DisplayName", "Unknown")
         steps_val = record.get("Steps", "0")
+        timestamp = record.get("Timestamp", "")
         
         try:
             steps_num = int(steps_val)
         except (ValueError, TypeError):
             continue
         
-        key = str(display_name) if display_name else str(user_id)
-        if key not in stats:
-            stats[key] = {
-                "name": key,
+        if user_id not in stats:
+            stats[user_id] = {
+                "name": display_name,
                 "user_id": user_id,
                 "total_steps": 0,
                 "days": 0,
                 "max_steps": 0,
                 "records": [],
+                "latest_ts": timestamp,
             }
         
-        stats[key]["total_steps"] += steps_num
-        stats[key]["days"] += 1
-        stats[key]["max_steps"] = max(stats[key]["max_steps"], steps_num)
-        stats[key]["records"].append(record)
+        # Имя берём из самой свежей записи, чтобы не дублировать участника при смене имени
+        if timestamp > stats[user_id]["latest_ts"]:
+            stats[user_id]["latest_ts"] = timestamp
+            stats[user_id]["name"] = display_name
+        
+        stats[user_id]["total_steps"] += steps_num
+        stats[user_id]["days"] += 1
+        stats[user_id]["max_steps"] = max(stats[user_id]["max_steps"], steps_num)
+        stats[user_id]["records"].append(record)
     
     result = list(stats.values())
     for s in result:
         s["avg_steps"] = round(s["total_steps"] / s["days"]) if s["days"] > 0 else 0
+        s.pop("latest_ts", None)
     
     return sorted(result, key=lambda x: x["total_steps"], reverse=True)
 
