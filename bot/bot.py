@@ -240,7 +240,8 @@ async def ask_date_selection(
     photo_hint = "📸 Скриншот получен." if photo_path else ""
     try:
         await reply_target.answer(
-            f"{photo_hint}\n\n📅 За какую дату <b>{steps:,}</b> шагов?",
+            f"{photo_hint}\n\n📅 За какую дату <b>{steps:,}</b> шагов?\n\n"
+            "Вы можете ввести дату вручную в формате <code>03.07</code>",
             reply_markup=builder.as_markup(),
             parse_mode=ParseMode.HTML,
         )
@@ -467,9 +468,9 @@ async def handle_text(message: Message):
     if text in (BTN_MY_STATS, BTN_LEADERBOARD, BTN_HELP, BTN_SEND_STEPS):
         return
 
-    # Пользователь вводит дату вручную после нажатия «Указать дату вручную»
+    # Если есть активная сессия выбора даты — пробуем понять текст как дату
     pending = pending_date_selections.get(user.id)
-    if pending and pending.get("awaiting_manual_date"):
+    if pending:
         if datetime.now().timestamp() - pending.get("created_at", 0) > PENDING_TTL_SECONDS:
             pending_date_selections.pop(user.id, None)
             pending = None
@@ -485,12 +486,12 @@ async def handle_text(message: Message):
                     photo_path=pending.get("photo_path") or "",
                 )
                 return
-            # Если прислали новое число шагов — перезапускаем обычный сценарий
-            if parse_steps_number(text) is None:
+            # В режиме ручного ввода не-дата и не-число — ошибка формата даты
+            if pending.get("awaiting_manual_date") and parse_steps_number(text) is None:
                 await send_menu(
                     message,
                     "❌ Не понял дату. Введи её в формате <code>ДД.ММ</code> "
-                    "или <code>ДД.ММ.ГГГГ</code>, например <code>15.07</code>.\n\n"
+                    "или <code>ДД.ММ.ГГГГ</code>, например <code>03.07</code>.\n\n"
                     "Дата должна быть в рамках конкурса.",
                 )
                 return
@@ -611,7 +612,7 @@ async def on_manual_date_requested(callback: CallbackQuery):
         await callback.message.answer(
             f"✍️ Введи дату для <b>{pending['steps']:,}</b> шагов в формате:\n"
             "<code>ДД.ММ</code> или <code>ДД.ММ.ГГГГ</code>\n\n"
-            "Например: <code>15.07</code>",
+            "Например: <code>03.07</code>",
             reply_markup=main_menu_keyboard(),
             parse_mode=ParseMode.HTML,
         )
