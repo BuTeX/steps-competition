@@ -113,10 +113,17 @@ def help_inline_keyboard() -> types.InlineKeyboardMarkup:
 
 
 # ─── Helpers ────────────────────────────────────────────────────────
-def _last_week_dates() -> list[str]:
-    """Возвращает даты за последние 7 дней (от старой к новой)."""
+# Сколько дней назад можно выбрать дату в inline-клавиатуре
+DATE_SELECTION_DAYS = 14
+
+
+def _recent_dates() -> list[str]:
+    """Возвращает даты за последние DATE_SELECTION_DAYS дней (от старой к новой)."""
     today = datetime.now().date()
-    return [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
+    return [
+        (today - timedelta(days=i)).strftime("%Y-%m-%d")
+        for i in range(DATE_SELECTION_DAYS - 1, -1, -1)
+    ]
 
 
 def _format_date(date_str: str) -> str:
@@ -204,7 +211,7 @@ async def ask_date_selection(
 ):
     """Показать inline-клавиатуру выбора даты."""
     logger.info(f"ask_date_selection: user={user.id}, steps={steps}, photo_path={photo_path}, suggested={suggested_date}")
-    dates = _last_week_dates()
+    dates = _recent_dates()
     user_steps = await asyncio.to_thread(db.get_user_steps, user.id)
     existing_dates = {str(s.get("Date", "")) for s in user_steps}
 
@@ -220,12 +227,14 @@ async def ask_date_selection(
             text = f"{label} (Не заполнено)"
         builder.button(text=text, callback_data=f"date_select:{date_str}")
 
+    builder.button(text="✍️ Указать дату вручную", callback_data="date_manual")
     builder.adjust(2)
 
     pending_date_selections[user.id] = {
         "steps": steps,
         "photo_path": photo_path,
         "created_at": datetime.now().timestamp(),
+        "awaiting_manual_date": False,
     }
 
     photo_hint = "📸 Скриншот получен." if photo_path else ""
@@ -258,7 +267,7 @@ async def cmd_start(message: Message):
         "Я бот для конкурса шагов. Все данные хранятся в облаке.\n\n"
         "👣 <b>Как отправить шаги:</b>\n"
         "1. Отправь число шагов сообщением.\n"
-        "2. Выбери дату кнопкой.\n"
+        "2. Выбери дату кнопкой или укажи её вручную (✍️).\n"
         "3. (Опционально) прикрепи скриншот.\n\n"
         "Используй меню ниже 👇"
     )
@@ -273,7 +282,8 @@ async def cmd_help(message: Message):
         "📖 <b>Справка</b>\n\n"
         "<b>Как отправить шаги:</b>\n"
         "• Отправь число шагов, например <code>8500</code>.\n"
-        "• Бот спросит дату — выбери кнопкой.\n"
+        "• Бот спросит дату — выбери кнопкой или нажми "
+        "«✍️ Указать дату вручную» и введи дату, например <code>15.07</code>.\n"
         "• Можно прикрепить скриншот из шагомера.\n\n"
         "<b>Меню:</b>\n"
         "• 📊 Моя статистика\n"
@@ -294,7 +304,7 @@ async def cmd_send_steps(message: Message | CallbackQuery):
         "Просто отправь мне число шагов, например:\n"
         "<code>8500</code>\n\n"
         "Если хочешь приложить скриншот — отправь фото сразу после числа или с подписью.\n\n"
-        "После этого я спрошу дату кнопками."
+        "После этого я спрошу дату — кнопками или вручную (✍️)."
     )
     if isinstance(message, CallbackQuery):
         await message.answer(text, parse_mode=ParseMode.HTML)
@@ -421,9 +431,13 @@ async def handle_photo(message: Message):
     if pending:
         pending["photo_path"] = str(local_path)
         pending_photos.pop(user.id, None)
+        if pending.get("awaiting_manual_date"):
+            hint = "Теперь введи дату текстом, например <code>15.07</code>."
+        else:
+            hint = "Теперь выбери дату кнопкой выше 👆"
         await send_menu(
             message,
-            "📸 Скриншот получен! Теперь выбери дату кнопкой выше 👆",
+            f"📸 Скриншот получен! {hint}",
         )
         return
 
@@ -452,6 +466,34 @@ async def handle_text(message: Message):
     # Игнорируем нажатия кнопок меню — они тоже отдельно
     if text in (BTN_MY_STATS, BTN_LEADERBOARD, BTN_HELP, BTN_SEND_STEPS):
         return
+
+    # Пользователь вводит дату вручную после нажатия «Указать дату вручную»
+    pending = pending_date_selections.get(user.id)
+    if pending and pending.get("awaiting_manual_date"):
+        if datetime.now().timestamp() - pending.get("created_at", 0) > PENDING_TTL_SECONDS:
+            pending_date_selections.pop(user.id, None)
+            pending = None
+        else:
+            manual_date = normalize_date(text)
+            if manual_date:
+                pending_date_selections.pop(user.id, None)
+                await process_steps(
+                    message,
+                    user,
+                    manual_date,
+                    pending["steps"],
+                    photo_path=pending.get("photo_path") or "",
+                )
+                return
+            # Если прислали новое число шагов — перезапускаем обычный сценарий
+            if parse_steps_number(text) is None:
+                await send_menu(
+                    message,
+                    "❌ Не понял дату. Введи её в формате <code>ДД.ММ</code> "
+                    "или <code>ДД.ММ.ГГГГ</code>, например <code>15.07</code>.\n\n"
+                    "Дата должна быть в рамках конкурса.",
+                )
+                return
 
     steps = parse_steps_number(text)
 
@@ -541,6 +583,40 @@ async def process_steps(
 
 
 # ─── Выбор даты ─────────────────────────────────────────────────────
+@dp.callback_query(F.data == "date_manual")
+async def on_manual_date_requested(callback: CallbackQuery):
+    """Пользователь хочет указать дату вручную текстом."""
+    user = callback.from_user
+    logger.info(f"Ручной ввод даты: user={user.id}")
+
+    pending = pending_date_selections.get(user.id)
+    created_at = pending.get("created_at", 0) if pending else 0
+    if not pending or datetime.now().timestamp() - created_at > PENDING_TTL_SECONDS:
+        await callback.answer(
+            "Сессия устарела. Отправь шаги заново.",
+            show_alert=True,
+        )
+        return
+
+    pending["awaiting_manual_date"] = True
+    # Продлеваем сессию, чтобы пользователь успел ввести дату
+    pending["created_at"] = datetime.now().timestamp()
+
+    await callback.answer()
+    if callback.message and hasattr(callback.message, "answer"):
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception as e:
+            logger.warning(f"Не удалось убрать клавиатуру: {e}")
+        await callback.message.answer(
+            f"✍️ Введи дату для <b>{pending['steps']:,}</b> шагов в формате:\n"
+            "<code>ДД.ММ</code> или <code>ДД.ММ.ГГГГ</code>\n\n"
+            "Например: <code>15.07</code>",
+            reply_markup=main_menu_keyboard(),
+            parse_mode=ParseMode.HTML,
+        )
+
+
 @dp.callback_query(F.data.startswith("date_select:"))
 async def on_date_selected(callback: CallbackQuery):
     """Обработка выбора даты в inline-клавиатуре."""
