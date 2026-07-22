@@ -22,10 +22,11 @@ interface SelectedCell {
 export function DailyMatrix({ matrix }: DailyMatrixProps) {
   const [selected, setSelected] = useState<SelectedCell | null>(null);
 
+  // Даты — от новых к старым (свежие дни сверху)
   const dates = useMemo(() => {
     const dateSet = new Set<string>();
     matrix.forEach((user) => user.dates.forEach((d) => dateSet.add(d.date)));
-    return Array.from(dateSet).sort();
+    return Array.from(dateSet).sort().reverse();
   }, [matrix]);
 
   if (matrix.length === 0 || dates.length === 0) {
@@ -67,54 +68,54 @@ export function DailyMatrix({ matrix }: DailyMatrixProps) {
         </p>
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
-            <thead>
+        <div className="max-h-[70vh] overflow-y-auto">
+          <table className="w-full table-fixed text-xs border-collapse">
+            <thead className="sticky top-0 bg-white z-10">
               <tr className="border-b border-slate-200">
-                <th className="sticky left-0 bg-white z-10 text-left px-3 py-2 font-semibold text-slate-700 min-w-[140px]">
-                  Участник
+                <th className="text-left px-2 py-2 font-semibold text-slate-700 w-[52px]">
+                  Дата
                 </th>
-                {dates.map((date) => (
+                {matrix.map((user) => (
                   <th
-                    key={date}
-                    className="text-center px-2 py-2 font-medium text-slate-500 min-w-[64px]"
+                    key={user.user_id}
+                    className="text-center px-1 py-2 font-medium text-slate-600 whitespace-normal break-words leading-tight align-bottom"
                   >
-                    {formatDate(date)}
+                    {user.name}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {matrix.map((user) => (
-                <tr key={user.user_id} className="border-b border-slate-100">
-                  <td className="sticky left-0 bg-white z-10 px-3 py-2 font-medium text-slate-900">
-                    {user.name}
+              {dates.map((date) => (
+                <tr key={date} className="border-b border-slate-100">
+                  <td className="px-2 py-1 font-medium text-slate-500 whitespace-nowrap">
+                    {formatDate(date)}
                   </td>
-                  {dates.map((date) => {
+                  {matrix.map((user) => {
                     const entry = user.dates.find((d) => d.date === date);
                     const hasScreenshot = !!entry?.screenshot_url;
 
                     return (
-                      <td key={date} className="px-1 py-1 text-center">
+                      <td key={user.user_id} className="px-0.5 py-1 text-center">
                         {entry ? (
                           hasScreenshot ? (
                             <button
                               onClick={() => setSelected({ user, entry })}
-                              className="w-full px-2 py-1.5 rounded-md bg-blue-50 text-blue-700 font-semibold hover:bg-blue-100 transition-colors cursor-pointer"
+                              className="w-full px-1 py-1.5 rounded-md bg-blue-50 text-blue-700 font-semibold hover:bg-blue-100 transition-colors cursor-pointer"
                               title="Посмотреть скриншот"
                             >
                               {entry.steps.toLocaleString()}
                             </button>
                           ) : (
                             <span
-                              className="block px-2 py-1.5 rounded-md bg-slate-50 text-slate-600 font-medium"
+                              className="block px-1 py-1.5 rounded-md bg-slate-50 text-slate-600 font-medium"
                               title="Скриншот не отправлен"
                             >
                               {entry.steps.toLocaleString()}
                             </span>
                           )
                         ) : (
-                          <span className="block px-2 py-1.5 text-slate-300">—</span>
+                          <span className="block px-1 py-1.5 text-slate-300">—</span>
                         )}
                       </td>
                     );

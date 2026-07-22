@@ -87,10 +87,11 @@ export default function Dashboard({ basePath = '/v3' }: DashboardProps) {
     return { width, height, padding, linePath, areaPath, yTicks, xLabels, maxSteps };
   }, [daily]);
 
+  // Даты — от новых к старым (свежие дни сверху)
   const matrixDates = useMemo(() => {
     const set = new Set<string>();
     matrix.forEach((u) => u.dates.forEach((d) => set.add(d.date)));
-    return Array.from(set).sort();
+    return Array.from(set).sort().reverse();
   }, [matrix]);
 
   return (
@@ -181,33 +182,38 @@ export default function Dashboard({ basePath = '/v3' }: DashboardProps) {
                   </div>
                 </div>
               </div>
-              <div className="overflow-x-auto p-2">
+              <div className="max-h-[70vh] overflow-y-auto p-2">
                 {matrix.length === 0 ? (
                   <div className="text-center py-12 text-[var(--d3-muted)]">Пока нет данных</div>
                 ) : (
-                  <table className="w-full text-sm">
-                    <thead>
+                  <table className="w-full table-fixed text-xs">
+                    <thead className="sticky top-0 bg-white z-10">
                       <tr className="border-b border-[var(--d3-border)]">
-                        <th className="text-left px-4 py-3 font-semibold sticky left-0 bg-white min-w-[140px]">Участник</th>
-                        {matrixDates.map((date) => (
-                          <th key={date} className="text-center px-2 py-3 font-medium text-[var(--d3-muted)] min-w-[64px]">
-                            {formatDate(date)}
+                        <th className="text-left px-2 py-3 font-semibold w-[52px]">Дата</th>
+                        {matrix.map((user) => (
+                          <th
+                            key={user.user_id}
+                            className="text-center px-1 py-3 font-medium text-[var(--d3-muted)] whitespace-normal break-words leading-tight align-bottom"
+                          >
+                            {user.name}
                           </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {matrix.map((user) => (
-                        <tr key={user.user_id} className="border-b border-[var(--d3-border)]/50 last:border-0">
-                          <td className="px-4 py-2 font-medium sticky left-0 bg-white">{user.name}</td>
-                          {matrixDates.map((date) => {
+                      {matrixDates.map((date) => (
+                        <tr key={date} className="border-b border-[var(--d3-border)]/50 last:border-0">
+                          <td className="px-2 py-1 font-medium text-[var(--d3-muted)] whitespace-nowrap">
+                            {formatDate(date)}
+                          </td>
+                          {matrix.map((user) => {
                             const entry = user.dates.find((d) => d.date === date);
                             return (
-                              <td key={date} className="px-1 py-1 text-center">
+                              <td key={user.user_id} className="px-0.5 py-1 text-center">
                                 {entry ? (
                                   <button
                                     onClick={() => entry.screenshot_url && setSelected({ user, entry })}
-                                    className={`w-full px-2 py-1.5 rounded-lg font-semibold transition-colors ${
+                                    className={`w-full px-1 py-1.5 rounded-lg font-semibold transition-colors ${
                                       entry.screenshot_url
                                         ? 'bg-[#7856FF]/10 text-[#7856FF] hover:bg-[#7856FF]/20'
                                         : 'bg-[var(--d3-surface)] text-[var(--d3-text)]'
@@ -216,7 +222,7 @@ export default function Dashboard({ basePath = '/v3' }: DashboardProps) {
                                     {entry.steps.toLocaleString()}
                                   </button>
                                 ) : (
-                                  <span className="block px-2 py-1.5 text-[var(--d3-muted)]/30">—</span>
+                                  <span className="block px-1 py-1.5 text-[var(--d3-muted)]/30">—</span>
                                 )}
                               </td>
                             );
